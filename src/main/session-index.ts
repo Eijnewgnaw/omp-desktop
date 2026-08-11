@@ -76,9 +76,14 @@ export class SessionIndex {
 
   async list(installation: OmpInstallation, includeArchived = false): Promise<SessionSummary[]> {
     const wslRoot = path.posix.join(installation.agentDir, "sessions");
-    const hostRoot = wslPathToHostPath(installation.distro, wslRoot);
+    const hostRoot = installation.direct
+      ? path.resolve(installation.agentDir, "sessions")
+      : wslPathToHostPath(installation.distro, wslRoot);
     const files = await sessionFiles(hostRoot);
-    const metadata = this.#store.getSessionMetadata(files.map(file => toWslPath(hostRoot, wslRoot, file)));
+    const sessionPathFor = (hostFile: string): string => installation.direct
+      ? hostFile
+      : toWslPath(hostRoot, wslRoot, hostFile);
+    const metadata = this.#store.getSessionMetadata(files.map(sessionPathFor));
     const summaries = (
       await Promise.all(
         files.map(async hostFile => {
@@ -89,7 +94,7 @@ export class SessionIndex {
             await handle.close();
             const parsed = parseSessionPrefix(buffer.toString("utf8"));
             if (!parsed) return null;
-            const sessionPath = toWslPath(hostRoot, wslRoot, hostFile);
+            const sessionPath = sessionPathFor(hostFile);
             const cwd = parsed.header.cwd ?? "/";
             const createdAt = parsed.header.timestamp ?? stat.birthtime.toISOString();
             const base: SessionSummary = {
