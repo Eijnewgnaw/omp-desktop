@@ -1,0 +1,21 @@
+# Security Policy
+
+## Supported versions
+
+当前只有最新的 Alpha 版本接收安全修复。
+
+## Reporting a vulnerability
+
+请使用 GitHub 的 [Private vulnerability reporting](https://github.com/Eijnewgnaw/omp-desktop/security/advisories/new) 私下报告漏洞。不要先创建公开 Issue，也不要附带真实 API 密钥、访问令牌或未脱敏的 OMP 会话。
+
+报告中请提供影响范围、复现条件、受影响版本和最小化的验证材料。维护者会确认收到报告，并在验证后协调修复与披露。
+
+## Security model
+
+- 渲染进程启用 `contextIsolation`、sandbox 和 `webSecurity`，并禁用 Node.js 集成。
+- Preload 只暴露固定 IPC 接口；主进程使用 schema 和路径规则校验输入。
+- OMP 进程通过参数数组启动，不拼接用户输入为 shell 命令。
+- 外部导航默认拒绝，仅允许系统浏览器打开 HTTP(S) URL。
+- App 不接管 OMP 凭据，不发送遥测，也不修改 OMP 会话文件。
+
+桌面壳无法替代对 OMP 本身、扩展、模型提供商和工作区代码的安全评估。运行工具前仍应检查 OMP 显示的意图与确认请求。
