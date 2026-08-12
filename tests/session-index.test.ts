@@ -21,6 +21,22 @@ function directInstallation(root: string, id = `linux-direct:${root}`): OmpInsta
   };
 }
 
+function hostInstallation(root: string, id?: string): OmpInstallation {
+  if (process.platform !== "win32") return directInstallation(root, id ?? `linux-direct:${root}`);
+  return {
+    id: id ?? `windows-native:${root}`,
+    kind: "windows-native",
+    label: "Windows (native)",
+    executablePath: path.join(root, "omp.exe"),
+    version: "17.2.12",
+    agentDir: root,
+  };
+}
+
+function hostWorkspace(name: string): string {
+  return process.platform === "win32" ? `C:\\work\\${name}` : `/work/${name}`;
+}
+
 function nativeInstallation(agentDir = "C:\\Users\\Alice\\.omp\\agent", id = "windows-native:fixture"): OmpInstallation {
   return {
     id,
@@ -120,19 +136,19 @@ describe("session indexing", () => {
       version: 3,
       id: "session-id",
       timestamp: "2026-08-12T00:00:00.000Z",
-      cwd: "/work/demo",
+      cwd: hostWorkspace("demo"),
       title: "原始标题",
       titleSource: "auto",
     })}\n`;
     await fs.writeFile(sessionPath, original);
     const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
     const index = new SessionIndex(store);
-    const installation = directInstallation(root);
+    const installation = hostInstallation(root);
     const [session] = await index.list(installation);
     expect(session?.title).toBe("原始标题");
     expect(session).toMatchObject({
       installationId: installation.id,
-      runtimeKind: "linux-direct",
+      runtimeKind: installation.kind,
       runtimeLabel: installation.label,
     });
     if (!session) throw new Error("Fixture session was not indexed");
@@ -154,7 +170,7 @@ describe("session indexing", () => {
       type: "session",
       id: "session-id",
       timestamp: "2026-08-12T00:00:00.000Z",
-      cwd: "/work/demo",
+      cwd: hostWorkspace("demo"),
     })}\n`;
     await fs.writeFile(sessionPath, content);
     await fs.mkdir(artifactPath);
@@ -164,7 +180,7 @@ describe("session indexing", () => {
 
     const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
     const index = new SessionIndex(store);
-    const installation = directInstallation(root);
+    const installation = hostInstallation(root);
     await index.list(installation);
     const result = await index.trash(installation, sessionPath);
 
@@ -186,7 +202,7 @@ describe("session indexing", () => {
     await fs.writeFile(outside, "{}\n");
     const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
     const index = new SessionIndex(store);
-    const installation = directInstallation(root);
+    const installation = hostInstallation(root);
 
     await expect(index.trash(installation, outside)).rejects.toThrow("outside the OMP sessions directory");
     expect(await fs.readFile(outside, "utf8")).toBe("{}\n");
@@ -204,13 +220,13 @@ describe("session indexing", () => {
       type: "session",
       id: "session-id",
       timestamp: "2026-08-12T00:00:00.000Z",
-      cwd: "/work/demo",
+      cwd: hostWorkspace("demo"),
     })}\n`;
     await fs.writeFile(sessionPath, content);
     await fs.writeFile(artifactPath, "unexpected sibling file");
     const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
     const index = new SessionIndex(store);
-    const installation = directInstallation(root);
+    const installation = hostInstallation(root);
     await index.list(installation);
 
     await expect(index.trash(installation, sessionPath)).rejects.toThrow("artifacts must be a directory");
@@ -230,7 +246,7 @@ describe("session indexing", () => {
       type: "session",
       id: "delete-me",
       timestamp: "2026-08-12T00:00:00.000Z",
-      cwd: "/work/delete-me",
+      cwd: hostWorkspace("delete-me"),
     })}\n`);
     await fs.mkdir(artifactPath);
     await fs.writeFile(path.join(artifactPath, "attachment.txt"), "delete me too");
@@ -238,7 +254,7 @@ describe("session indexing", () => {
     await fs.writeFile(unrelated, "safe");
     const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
     const index = new SessionIndex(store);
-    const installation = directInstallation(root);
+    const installation = hostInstallation(root);
     const [indexed] = await index.list(installation);
     if (!indexed) throw new Error("Fixture session was not indexed");
     index.update(installation, indexed.path, { pinned: true });
@@ -266,7 +282,7 @@ describe("session indexing", () => {
     await fs.symlink(outside, sessionPath);
     const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
     const index = new SessionIndex(store);
-    const installation = directInstallation(root);
+    const installation = hostInstallation(root);
 
     await expect(index.deletePermanently(installation, outside)).rejects.toThrow("outside the OMP sessions directory");
     await expect(index.deletePermanently(installation, sessionPath)).rejects.toThrow("indexed");
@@ -285,12 +301,12 @@ describe("session indexing", () => {
       type: "session",
       id: "same-session",
       timestamp: "2026-08-12T00:00:00.000Z",
-      cwd: "/work/same",
+      cwd: hostWorkspace("same"),
     })}\n`);
     const store = new MetadataStore(path.join(rootA, "metadata.sqlite3"));
     const index = new SessionIndex(store);
-    const installationA = directInstallation(rootA, "linux-direct:a");
-    const installationB = directInstallation(rootB, "linux-direct:b");
+    const installationA = hostInstallation(rootA, `${process.platform === "win32" ? "windows-native" : "linux-direct"}:a`);
+    const installationB = hostInstallation(rootB, `${process.platform === "win32" ? "windows-native" : "linux-direct"}:b`);
     await index.list(installationA);
 
     expect(() => index.update(installationB, sessionPath, { pinned: true })).toThrow(
