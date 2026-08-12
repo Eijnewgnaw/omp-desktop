@@ -104,6 +104,23 @@ describe("desktop security boundaries", () => {
       ...direct,
       dataDir: "/home/me/.local/share/omp/profiles/work",
     })).toBe(installationMetadataKey(direct));
+
+    const macos = {
+      kind: "macos-native" as const,
+      executablePath: "/opt/homebrew/bin/omp",
+      profile: "work",
+      agentDir: "/Users/me/.omp/profiles/work/agent",
+    };
+    expect(installationMetadataKey(macos)).toBe(JSON.stringify([
+      "macos-native-profile",
+      "/opt/homebrew/bin/omp",
+      "work",
+      "/Users/me/.omp/profiles/work/agent",
+    ]));
+    expect(installationMetadataKey({
+      ...macos,
+      dataDir: "/Users/me/Library/Application Support/omp/profiles/work",
+    })).toBe(installationMetadataKey(macos));
   });
 
   it("matches OMP profile validation and keeps every profile identity isolated", () => {

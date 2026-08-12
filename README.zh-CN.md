@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Eijnewgnaw/omp-desktop/releases/latest"><strong>下载 Windows 版</strong></a>
+  <a href="https://github.com/Eijnewgnaw/omp-desktop/releases/latest"><strong>下载最新版本</strong></a>
   · <a href="README.md">English</a>
   · <a href="docs/DEVELOPMENT.md">开发文档</a>
 </p>
@@ -20,7 +20,7 @@
   <a href="https://github.com/Eijnewgnaw/omp-desktop/releases"><img src="https://img.shields.io/github/v/release/Eijnewgnaw/omp-desktop?label=release" alt="最新版本" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-658f90" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/Windows-available-4b8bbe" alt="Windows 已发布" />
-  <img src="https://img.shields.io/badge/macOS-coming%20soon-b7b7b7" alt="macOS 即将推出" />
+  <img src="https://img.shields.io/badge/macOS-supported-658f90" alt="macOS 已支持" />
 </p>
 
 ![OMP Desktop 英文界面](docs/images/omp-desktop-home.png)
@@ -35,22 +35,22 @@ OMP Desktop 是 [Oh My Pi（OMP）](https://github.com/can1357/oh-my-pi) 的本�
 
 | 功能 | 说明 |
 | --- | --- |
-| **Windows 与 WSL 运行时** | 在同一个 App 中使用 Windows 原生 OMP、WSL2 OMP，或同时使用两者。 |
+| **原生桌面运行时** | 使用 macOS 原生 OMP、Windows 原生 OMP、WSL2 OMP，或同时使用 Windows 与 WSL。 |
 | **Profile 独立会话** | 隔离保存每个 OMP Profile 的项目目录、主题和会话历史。 |
 | **真实会话恢复** | 通过 OMP 原生 RPC 继续已有 JSONL 会话。 |
 | **模型选择** | 查看并切换 OMP 返回的可用模型。 |
 | **会话资料库** | 搜索、重命名、置顶、归档、恢复、移到回收站或彻底删除。 |
 | **实时 Agent 动态** | 查看流式回复、思考、Markdown、代码、工具调用和确认请求。 |
 | **OMP 主题同步** | 跟随 OMP 的亮色、暗色、自定义、符号和色盲主题设置。 |
-| **终端交接** | 安全地把会话交给 Windows Terminal，并在返回时重新接管。 |
+| **终端交接** | 安全地把会话交给 macOS Terminal 或 Windows Terminal，并在返回时重新接管。 |
 
 ## 三步开始
 
 1. 点击 **新建会话**。
-2. 选择 **Windows** 或 **WSL**、OMP Profile 和项目目录。
+2. 选择检测到的原生或 WSL 运行时、OMP Profile 和项目目录。
 3. 开始新对话，或在原运行环境中继续任何已保存会话。
 
-每个会话都会保留自己的运行时、Profile 和工作区。Windows `C:\...` 与 WSL `/...` 路径互不混用，所有权锁可避免桌面端和终端 OMP 同时写入同一会话。
+每个会话都会保留自己的运行时、Profile 和工作区。macOS `/...`、Windows `C:\...` 与 WSL `/...` 的身份互不混用，所有权锁可避免桌面端和终端 OMP 同时写入同一会话。
 
 ## 平台支持
 
@@ -59,17 +59,18 @@ OMP Desktop 是 [Oh My Pi（OMP）](https://github.com/can1357/oh-my-pi) 的本�
 | Windows 11 x64 + Windows 原生 OMP | **已支持** |
 | Windows 11 x64 + WSL2 OMP | **已支持** |
 | Default 与命名 OMP Profiles | **已支持** |
-| macOS | **即将推出** |
+| Apple Silicon macOS | **代码已支持；从下一个版本标签开始打包** |
+| Intel macOS | **代码已支持；从下一个版本标签开始打包** |
 | 原生 Linux 桌面 | 暂不支持 |
 
 ## 安装
 
-1. 在 Windows 原生环境、WSL2 或两者中安装并配置 OMP。
-2. 从 [GitHub Releases](https://github.com/Eijnewgnaw/omp-desktop/releases/latest) 下载最新安装包。
+1. 在 macOS、Windows 原生环境、WSL2 或两个 Windows 环境中安装并配置 OMP。
+2. 从 [GitHub Releases](https://github.com/Eijnewgnaw/omp-desktop/releases/latest) 下载当前版本已提供的对应 DMG/ZIP 或 Windows 安装包。
 3. 启动 OMP Desktop 并创建第一个会话。
 
 > [!NOTE]
-> Windows 安装包暂未代码签名，因此 SmartScreen 可能显示“未知发布者”。请只从本仓库下载。
+> macOS 与 Windows 安装包暂未代码签名或公证，因此系统可能显示未知开发者警告。请只从本仓库下载。
 
 ## 本地优先
 

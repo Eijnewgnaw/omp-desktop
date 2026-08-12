@@ -9,7 +9,7 @@ export type RuntimeState =
   | "failed"
   | "exited";
 
-export type OmpRuntimeKind = "windows-native" | "wsl" | "linux-direct";
+export type OmpRuntimeKind = "windows-native" | "wsl" | "macos-native" | "linux-direct";
 
 export interface OmpInstallation {
   id: string;
@@ -32,7 +32,7 @@ export interface OmpInstallation {
 
 export interface EnvironmentInfo {
   platform: string;
-  mode: "windows-dual" | "linux-direct" | "unsupported";
+  mode: "windows-dual" | "macos-native" | "linux-direct" | "unsupported";
   installations: OmpInstallation[];
   diagnostics: string[];
 }

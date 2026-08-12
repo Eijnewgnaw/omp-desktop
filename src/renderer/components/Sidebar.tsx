@@ -182,7 +182,7 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         <FolderOpen size={16} />
         <span>
           <small>{props.workspaceSelectable ? "新建会话" : "会话工作区"}</small>
-          <strong>{props.workspace || "选择 Windows/WSL 与项目"}</strong>
+          <strong>{props.workspace || "选择 OMP 运行环境与项目"}</strong>
         </span>
         <MoreHorizontal size={16} />
       </button>

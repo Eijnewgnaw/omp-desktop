@@ -3,11 +3,13 @@ import { access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { dataDirFromGcPlan } from "../src/main/environment-service";
 import { OmpRpcClient } from "../src/main/omp-rpc-client";
-import type { RpcFrame } from "../src/shared/contracts";
+import type { OmpRuntimeKind, RpcFrame } from "../src/shared/contracts";
 
 const integrationEnabled = process.env.OMP_INTEGRATION === "1";
 const ompPath = process.env.OMP_EXECUTABLE
   || (integrationEnabled ? execFileSync("sh", ["-lc", "command -v omp"], { encoding: "utf8" }).trim() : "omp");
+const runtimeKind: OmpRuntimeKind = process.platform === "darwin" ? "macos-native" : "linux-direct";
+const installationId = `${runtimeKind}:${ompPath}`;
 
 describe.skipIf(!integrationEnabled)("real OMP RPC integration", () => {
   it("handshakes, reads state, and lists selectable models without invoking one", async () => {
@@ -18,19 +20,19 @@ describe.skipIf(!integrationEnabled)("real OMP RPC integration", () => {
     const gcPlan = execFileSync(ompPath, ["--profile", "default", "gc", "--json", "--wal"], {
       encoding: "utf8",
     });
-    const dataDir = dataDirFromGcPlan({ kind: "linux-direct" }, gcPlan, agentDir);
+    const dataDir = dataDirFromGcPlan({ kind: runtimeKind }, gcPlan, agentDir);
     const client = new OmpRpcClient(
       "019ff18b-2e8c-70b2-8700-ec77ab0171aa",
       {
-        id: `linux-direct:${ompPath}`,
-        kind: "linux-direct",
-        label: "Local Linux OMP",
+        id: installationId,
+        kind: runtimeKind,
+        label: process.platform === "darwin" ? "Local macOS OMP" : "Local Linux OMP",
         executablePath: ompPath,
         version: "17.2.12",
         agentDir,
         ...(dataDir && dataDir !== agentDir ? { dataDir } : {}),
       },
-      { installationId: `linux-direct:${ompPath}`, path: "/tmp" },
+      { installationId, path: "/tmp" },
     );
     await client.start();
     const stateResponse = new Promise<RpcFrame>(resolve => {

@@ -70,6 +70,7 @@ const app = await electron.launch({
     ...process.env,
     HOME: fakeHomeDirectory,
     PATH: `${fakeBinDirectory}${path.delimiter}${process.env.PATH || ""}`,
+    OMP_EXECUTABLE: path.join(fakeBinDirectory, "omp"),
     ELECTRON_DISABLE_SANDBOX: "1",
     FAKE_OMP_AGENT_DIR: defaultAgentDirectory,
     FAKE_OMP_PROFILE_AGENT_DIRS: JSON.stringify({ work: workAgentDirectory }),
@@ -86,9 +87,10 @@ try {
   const detected = await page.evaluate(() => window.ompDesktop.environment.detect());
   const defaultInstallation = detected.installations.find(installation => installation.profile === undefined);
   const workInstallation = detected.installations.find(installation => installation.profile === "work");
+  const expectedRuntimeKind = process.platform === "darwin" ? "macos-native" : "linux-direct";
   if (!defaultInstallation || !workInstallation
     || detected.installations.length !== 2
-    || detected.installations.some(installation => installation.kind !== "linux-direct")) {
+    || detected.installations.some(installation => installation.kind !== expectedRuntimeKind)) {
     throw new Error(`Work Profile was not detected: ${JSON.stringify({
       installations: detected.installations,
       diagnostics: detected.diagnostics,
@@ -102,9 +104,10 @@ try {
   const defaultRow = page.locator(".session-row").filter({ hasText: "Default profile session" }).first();
   const workRow = page.locator(".session-row").filter({ hasText: "Work profile session" }).first();
   await Promise.all([defaultRow.waitFor(), workRow.waitFor()]);
-  await defaultRow.getByText("WSL", { exact: true }).waitFor();
+  const expectedRuntimeLabel = process.platform === "darwin" ? "macOS" : "WSL";
+  await defaultRow.getByText(expectedRuntimeLabel, { exact: true }).waitFor();
   await defaultRow.getByText("Default", { exact: true }).waitFor();
-  await workRow.getByText("WSL", { exact: true }).waitFor();
+  await workRow.getByText(expectedRuntimeLabel, { exact: true }).waitFor();
   await workRow.getByText("Profile · work", { exact: true }).waitFor();
 
   await page.getByTitle("设置", { exact: true }).click();
@@ -145,13 +148,13 @@ try {
   const newSessionDialog = page.getByRole("dialog", { name: "新建会话" });
   await newSessionDialog.waitFor();
   if (await newSessionDialog.getByRole("radio").count() !== 1) {
-    throw new Error("The WSLg development runtime did not collapse into one WSL top-level location");
+    throw new Error("The native development runtime did not collapse into one top-level location");
   }
-  await newSessionDialog.getByRole("radio", { name: /^WSL/u }).waitFor();
+  await newSessionDialog.getByRole("radio", { name: new RegExp(`^${expectedRuntimeLabel}`, "u") }).waitFor();
   const profileOptions = await newSessionDialog.getByRole("combobox", { name: "OMP Profile" })
     .locator("option").allTextContents();
   if (JSON.stringify(profileOptions) !== JSON.stringify(["Default", "work"])) {
-    throw new Error(`Profiles were not nested under WSL: ${JSON.stringify(profileOptions)}`);
+    throw new Error(`Profiles were not nested under ${expectedRuntimeLabel}: ${JSON.stringify(profileOptions)}`);
   }
   const [runtimeWhileNewDialogOpen] = await page.evaluate(() => window.ompDesktop.runtime.list());
   if (!runtimeBeforeNewDialog
@@ -167,7 +170,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     profileDiscovery: true,
-    profilesNestedUnderWsl: true,
+    profilesNestedUnderRuntime: true,
     sessionBadges: true,
     savedRuntimeIsolation: true,
     themeIsolation: true,

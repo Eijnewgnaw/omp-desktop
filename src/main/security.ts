@@ -140,9 +140,10 @@ export function installationMetadataKey(installation: MetadataInstallation): str
   }
   const executablePath = assertWslPath(installation.executablePath, "OMP executable");
   const agentDir = assertWslPath(installation.agentDir, "agent directory");
+  const kind = installation.kind === "macos-native" ? "macos-native" : "linux-direct";
   return JSON.stringify(profile
-    ? ["linux-direct-profile", executablePath, profile, agentDir]
-    : ["linux-direct", executablePath, agentDir]);
+    ? [`${kind}-profile`, executablePath, profile, agentDir]
+    : [kind, executablePath, agentDir]);
 }
 
 export function assertRuntimeId(value: string): string {

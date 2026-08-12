@@ -10,7 +10,7 @@
 2. 运行 `npm ci`。
 3. 运行 `npm run dev` 启动开发环境。
 
-Windows 功能需要 Windows 原生或 WSL2 中存在可执行的 `omp`；Default 与命名 Profiles 会作为独立环境检测。Linux 仅作为 WSLg 开发兼容模式。
+macOS 功能需要本机存在可执行的 `omp`；Windows 功能需要 Windows 原生或 WSL2 中存在可执行的 `omp`。Default 与命名 Profiles 会作为独立环境检测，Linux 仅作为 WSLg 开发兼容模式。
 
 ## 提交前检查
 
@@ -30,4 +30,4 @@ npm run build
 - 兼容未知 RPC 帧；新增显示能力不应让旧帧导致崩溃。
 - UI 颜色优先来自 OMP 语义主题令牌，不建立平行主题体系。
 
-Bug 报告请包含 Windows 版本、所选运行环境（Windows 原生或 WSL 发行版）、Profile、OMP 版本、复现步骤和已脱敏日志。不要提交 API 密钥或原始会话内容。
+Bug 报告请包含操作系统版本、CPU 架构、所选运行环境（macOS 原生、Windows 原生或 WSL 发行版）、Profile、OMP 版本、复现步骤和已脱敏日志。不要提交 API 密钥或原始会话内容。

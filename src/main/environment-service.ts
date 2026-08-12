@@ -84,7 +84,9 @@ function installationLabel(kind: OmpRuntimeKind, distro?: string, profile?: stri
     ? "Windows (native)"
     : kind === "wsl"
       ? `${distro ?? "WSL"} (WSL)`
-      : "Linux (direct)";
+      : kind === "macos-native"
+        ? "macOS (native)"
+        : "Linux (direct)";
   return profile ? `${runtime} · Profile · ${profile}` : runtime;
 }
 
@@ -438,13 +440,73 @@ async function detectDirect(): Promise<EnvironmentInfo> {
   }
 }
 
+export function macosNativeCandidatePaths(
+  env: NodeJS.ProcessEnv,
+  shellOutput = "",
+): string[] {
+  const values = env.OMP_EXECUTABLE
+    ? [env.OMP_EXECUTABLE]
+    : [
+        "/opt/homebrew/bin/omp",
+        "/usr/local/bin/omp",
+        env.HOME ? path.posix.join(env.HOME, ".local", "bin", "omp") : undefined,
+        ...shellOutput.split(/\r?\n/u),
+      ];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const rawValue of values) {
+    if (!rawValue) continue;
+    try {
+      const value = assertWslPath(rawValue.trim(), "OMP executable");
+      if (seen.has(value)) continue;
+      seen.add(value);
+      result.push(value);
+    } catch {
+      // Finder-launched apps have a minimal PATH. Login-shell output and
+      // environment overrides are discovery hints until OMP itself is probed.
+    }
+  }
+  return result;
+}
+
+export async function detectMacosEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<EnvironmentInfo> {
+  const diagnostics: string[] = [];
+  const shellOutput = env.OMP_EXECUTABLE
+    ? ""
+    : await execFileAsync("/bin/zsh", ["-lc", "command -v omp"])
+      .then(result => result.stdout, () => "");
+  const candidates = macosNativeCandidatePaths(env, shellOutput);
+  const results = await Promise.allSettled(
+    candidates.map(executablePath => probeBackend({ kind: "macos-native", executablePath })),
+  );
+  const available = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+  const installations = deduplicatePhysicalInstallations(
+    available.flatMap(result => result.installations),
+  );
+  diagnostics.push(...available.flatMap(result => result.diagnostics));
+  if (installations.length === 0) {
+    diagnostics.push(
+      "未检测到可用的 macOS OMP。已检查登录 shell、Homebrew 和 ~/.local/bin；请先安装并配置 OMP。",
+    );
+  }
+  return {
+    platform: "darwin",
+    mode: "macos-native",
+    installations,
+    diagnostics,
+  };
+}
+
 export async function detectEnvironment(platform: NodeJS.Platform = process.platform): Promise<EnvironmentInfo> {
   if (platform === "win32") return detectWindowsEnvironment();
+  if (platform === "darwin") return detectMacosEnvironment();
   if (platform === "linux") return detectDirect();
   return {
     platform,
     mode: "unsupported",
     installations: [],
-    diagnostics: ["当前版本支持 Windows 原生 OMP、Windows + WSL2，以及 Linux 直接运行模式。"],
+    diagnostics: ["当前版本支持 macOS 原生 OMP、Windows 原生 OMP、Windows + WSL2，以及 Linux 开发模式。"],
   };
 }

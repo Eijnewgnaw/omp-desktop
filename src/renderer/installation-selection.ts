@@ -22,6 +22,7 @@ export function sameBaseRuntime(left: OmpInstallation, right: OmpInstallation): 
 }
 
 export function baseRuntimeLabel(installation: OmpInstallation): string {
+  if (installation.kind === "macos-native") return "macOS 本机";
   if (installation.kind === "windows-native") return "Windows 原生";
   if (installation.kind === "wsl") return `WSL · ${installation.distro ?? installation.label}`;
   return "Linux 本机";

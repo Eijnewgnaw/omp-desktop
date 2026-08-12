@@ -2,7 +2,7 @@
   "name": "omp-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "An unofficial Windows and WSL desktop client for Oh My Pi",
+  "description": "An unofficial macOS, Windows, and WSL desktop client for Oh My Pi",
   "license": "MIT",
   "main": "out/main/index.js",
   "author": "Eijnewgnaw and OMP Desktop contributors",
@@ -81,6 +81,18 @@
           ]
         }
       ]
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "OMP Desktop ${version}"
     },
     "linux": {
       "icon": "build/icon.png",

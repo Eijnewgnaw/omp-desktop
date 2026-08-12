@@ -15,6 +15,19 @@ let shutdownInProgress = false;
 let shutdownComplete = false;
 
 function createWindow(): BrowserWindow {
+  const titleBarOptions = process.platform === "darwin"
+    ? {
+        titleBarStyle: "hiddenInset" as const,
+        trafficLightPosition: { x: 16, y: 13 },
+      }
+    : {
+        titleBarStyle: "hidden" as const,
+        titleBarOverlay: {
+          color: "#121419",
+          symbolColor: "#d4d8e4",
+          height: 42,
+        },
+      };
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -22,12 +35,7 @@ function createWindow(): BrowserWindow {
     minHeight: 680,
     show: false,
     backgroundColor: "#121419",
-    titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: "#121419",
-      symbolColor: "#d4d8e4",
-      height: 42,
-    },
+    ...titleBarOptions,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,

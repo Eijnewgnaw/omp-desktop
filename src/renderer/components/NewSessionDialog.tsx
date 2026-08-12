@@ -4,6 +4,7 @@ import type { OmpInstallation } from "../../shared/contracts";
 import {
   installationsForLocation,
   RUNTIME_LOCATION_LABELS,
+  RUNTIME_LOCATIONS,
   runtimeLocation,
   type RuntimeLocation,
   visibleRuntimeInstallations,
@@ -64,7 +65,7 @@ export function NewSessionDialog(props: NewSessionDialogProps): React.JSX.Elemen
     [props.installations],
   );
   const selectedInstallation = installations.find(item => item.id === props.selectedInstallationId);
-  const availableBackends = (["windows-native", "wsl"] as const).filter(kind =>
+  const availableBackends = RUNTIME_LOCATIONS.filter(kind =>
     installations.some(item => runtimeLocation(item.kind) === kind));
   const backendInstallations = selectedInstallation
     ? installationsForLocation(installations, runtimeLocation(selectedInstallation.kind))
@@ -233,13 +234,17 @@ export function NewSessionDialog(props: NewSessionDialogProps): React.JSX.Elemen
                       data-runtime-location={kind}
                     >
                       <span>{RUNTIME_LOCATION_LABELS[kind]}</span>
-                      <small>{kind === "windows-native" ? "使用 Windows 中安装的 OMP" : "使用 WSL 中安装的 OMP"}</small>
+                      <small>{kind === "macos-native"
+                        ? "使用 macOS 中安装的 OMP"
+                        : kind === "windows-native"
+                          ? "使用 Windows 中安装的 OMP"
+                          : "使用 WSL 中安装的 OMP"}</small>
                     </button>
                   ))}
                 </div>
               ) : (
                 <div className="new-session-empty" role="status">
-                  未检测到可用的 Windows 或 WSL OMP
+                  未检测到可用的 OMP
                 </div>
               )}
             </div>

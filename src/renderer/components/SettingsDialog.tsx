@@ -8,6 +8,7 @@ import type {
 import {
   installationsForLocation,
   RUNTIME_LOCATION_LABELS,
+  RUNTIME_LOCATIONS,
   runtimeLocation,
   type RuntimeLocation,
   visibleRuntimeInstallations,
@@ -55,7 +56,7 @@ interface SettingsDialogProps {
 export function SettingsDialog(props: SettingsDialogProps): React.JSX.Element {
   const installations = visibleRuntimeInstallations(props.environment.installations);
   const selectedInstallation = installations.find(item => item.id === props.settings.selectedInstallationId);
-  const availableBackends = (["windows-native", "wsl"] as const).filter(kind =>
+  const availableBackends = RUNTIME_LOCATIONS.filter(kind =>
     installations.some(item => runtimeLocation(item.kind) === kind));
   const backendInstallations = selectedInstallation
     ? installationsForLocation(installations, runtimeLocation(selectedInstallation.kind))
