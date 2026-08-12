@@ -31,7 +31,7 @@ await fs.writeFile(sessionPath, [
   "",
 ].join("\n"));
 
-const electronPath = process.env.ELECTRON_EXECUTABLE || path.resolve("node_modules", "electron", "dist", "electron");
+const electronPath = process.env.ELECTRON_EXECUTABLE || (await import("electron")).default;
 const app = await electron.launch({
   executablePath: electronPath,
   args: [path.resolve("out/main/index.js"), `--user-data-dir=${userDataDirectory}`],
