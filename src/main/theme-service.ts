@@ -1,9 +1,8 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import type { OmpInstallation, ThemeJson, ThemeSnapshot } from "../shared/contracts";
 import themeBundleJson from "../shared/omp-themes.generated.json";
 import { runOmp } from "./environment-service";
-import { wslPathToHostPath } from "./security";
+import { joinLogicalPath, toHostPath } from "./security";
 
 interface ThemeBundle {
   source: string;
@@ -148,9 +147,17 @@ async function getConfigValue(installation: OmpInstallation, key: string, fallba
   }
 }
 
+export function customThemeLogicalPath(installation: OmpInstallation, name: string): string {
+  if (!/^[\p{L}\p{N}._ -]{1,128}$/u.test(name) || name === "." || name === "..") {
+    throw new Error("Invalid custom OMP theme name");
+  }
+  return joinLogicalPath(installation, installation.agentDir, "themes", `${name}.json`);
+}
+
 async function loadCustomTheme(installation: OmpInstallation, name: string): Promise<ThemeJson | null> {
   try {
-    const file = wslPathToHostPath(installation.distro, path.posix.join(installation.agentDir, "themes", `${name}.json`));
+    const logicalPath = customThemeLogicalPath(installation, name);
+    const file = toHostPath(installation, logicalPath);
     return JSON.parse(await fs.readFile(file, "utf8")) as ThemeJson;
   } catch {
     return null;
@@ -159,7 +166,8 @@ async function loadCustomTheme(installation: OmpInstallation, name: string): Pro
 
 async function customThemeNames(installation: OmpInstallation): Promise<string[]> {
   try {
-    const directory = wslPathToHostPath(installation.distro, path.posix.join(installation.agentDir, "themes"));
+    const logicalPath = joinLogicalPath(installation, installation.agentDir, "themes");
+    const directory = toHostPath(installation, logicalPath);
     return (await fs.readdir(directory))
       .filter(file => file.endsWith(".json"))
       .map(file => file.slice(0, -5));

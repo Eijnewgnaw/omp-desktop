@@ -1,35 +1,45 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import path from "node:path";
-import { dialog, shell } from "electron";
-import type { OpenTerminalInput, WorkspaceInput } from "../shared/contracts";
+import { dialog } from "electron";
+import type { HandoffSessionInput, OmpInstallation } from "../shared/contracts";
 import { execInDistro } from "./environment-service";
-import { assertDistro, assertWslPath, wslPathToHostPath } from "./security";
+import {
+  assertDistro,
+  assertLogicalPath,
+  assertWslPath,
+  ompArgumentsForInstallation,
+} from "./security";
 
-async function selectedPathToWsl(distro: string, selectedPath: string): Promise<string> {
+async function selectedPathToWsl(installation: OmpInstallation, selectedPath: string): Promise<string> {
+  const distro = assertDistro(installation.distro ?? "");
   if (process.platform !== "win32") return assertWslPath(selectedPath);
-  const prefix = `\\\\wsl.localhost\\${distro}\\`;
-  if (selectedPath.toLowerCase().startsWith(prefix.toLowerCase())) {
+  const prefixes = [`\\\\wsl.localhost\\${distro}\\`, `\\\\wsl$\\${distro}\\`];
+  const prefix = prefixes.find(value => selectedPath.toLowerCase().startsWith(value.toLowerCase()));
+  if (prefix) {
     return assertWslPath(`/${selectedPath.slice(prefix.length).split("\\").join("/")}`);
   }
   return assertWslPath(await execInDistro(distro, "wslpath", ["-u", selectedPath]));
 }
 
-export async function chooseWorkspace(distro: string): Promise<string | null> {
-  const safeDistro = assertDistro(distro);
+export async function chooseWorkspace(installation: OmpInstallation): Promise<string | null> {
+  const defaultPath = (() => {
+    if (installation.kind === "windows-native") {
+      return process.env.USERPROFILE ?? path.win32.dirname(installation.agentDir);
+    }
+    if (installation.kind === "wsl") {
+      return `\\\\wsl.localhost\\${assertDistro(installation.distro ?? "")}\\home`;
+    }
+    return process.cwd();
+  })();
   const result = await dialog.showOpenDialog({
     title: "选择 OMP 工作区",
     properties: ["openDirectory", "createDirectory"],
-    defaultPath: process.platform === "win32" ? `\\\\wsl.localhost\\${safeDistro}\\home` : process.cwd(),
+    defaultPath,
   });
   const selected = result.filePaths[0];
   if (result.canceled || !selected) return null;
-  return selectedPathToWsl(safeDistro, selected);
-}
-
-export async function openWorkspacePath(input: WorkspaceInput): Promise<void> {
-  const hostPath = wslPathToHostPath(input.distro, input.path);
-  const error = await shell.openPath(hostPath);
-  if (error) throw new Error(error);
+  if (installation.kind === "wsl") return selectedPathToWsl(installation, selected);
+  return assertLogicalPath(installation, selected, "workspace path");
 }
 
 export interface TerminalLaunch {
@@ -44,24 +54,40 @@ type SpawnTerminal = (command: string, args: readonly string[], options: SpawnOp
 const TERMINAL_STARTUP_WINDOW_MS = 250;
 
 // Windows Terminal treats semicolons inside the child command line as action
-// separators. Prefix literal semicolons so paths and profile names stay in the
-// single new-tab command that we construct.
+// separators. Prefix literal semicolons so paths stay in the single new-tab
+// command that we construct.
 function escapeWindowsTerminalArgument(value: string): string {
   return value.replaceAll(";", "\\;");
 }
 
 export function buildOmpTerminalLaunch(
-  input: OpenTerminalInput,
+  installation: OmpInstallation,
+  input: HandoffSessionInput,
   platform: NodeJS.Platform = process.platform,
   terminal = process.env.TERMINAL || "x-terminal-emulator",
 ): TerminalLaunch {
-  const distro = assertDistro(input.distro);
-  const cwd = assertWslPath(input.path, "workspace path");
-  const ompPath = assertWslPath(input.installationPath, "OMP executable");
-  const ompArgs = [ompPath, "--cwd", cwd];
-  if (input.profile) ompArgs.push("--profile", input.profile);
-  if (input.sessionPath) ompArgs.push("--resume", assertWslPath(input.sessionPath, "session path"));
-  if (platform === "win32") {
+  const cwd = assertLogicalPath(installation, input.path, "workspace path");
+  const ompPath = assertLogicalPath(installation, installation.executablePath, "OMP executable");
+  const ompArgs = [ompPath, ...ompArgumentsForInstallation(installation, ["--cwd", cwd])];
+  if (input.sessionPath) {
+    ompArgs.push("--resume", assertLogicalPath(installation, input.sessionPath, "session path"));
+  }
+  if (installation.kind === "windows-native") {
+    if (platform !== "win32") throw new Error("Native Windows OMP requires Windows Terminal");
+    const commandline = ["--startingDirectory", cwd, ...ompArgs].map(escapeWindowsTerminalArgument);
+    return {
+      command: "wt.exe",
+      args: ["-w", "new", "new-tab", ...commandline],
+      options: {
+        detached: true,
+        stdio: "ignore",
+      },
+      displayName: "Windows Terminal",
+    };
+  }
+  if (installation.kind === "wsl") {
+    if (platform !== "win32") throw new Error("WSL OMP terminal handoff requires Windows Terminal");
+    const distro = assertDistro(installation.distro ?? "");
     const commandline = ["wsl.exe", "-d", distro, "--cd", cwd, "--exec", ...ompArgs]
       .map(escapeWindowsTerminalArgument);
     return {
@@ -144,6 +170,6 @@ export async function spawnDetachedTerminal(
   });
 }
 
-export async function openOmpTerminal(input: OpenTerminalInput): Promise<void> {
-  await spawnDetachedTerminal(buildOmpTerminalLaunch(input));
+export async function openOmpTerminal(installation: OmpInstallation, input: HandoffSessionInput): Promise<void> {
+  await spawnDetachedTerminal(buildOmpTerminalLaunch(installation, input));
 }

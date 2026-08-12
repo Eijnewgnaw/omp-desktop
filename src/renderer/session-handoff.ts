@@ -1,28 +1,37 @@
-import type { SessionHandoff } from "../shared/contracts";
+import type { OmpInstallation, SessionHandoff } from "../shared/contracts";
+import { sessionMatchesIdentity } from "./session-collection";
+
+type InstallationIdentity = string | Pick<OmpInstallation, "id" | "kind" | "distro" | "executablePath">;
+
+function installationId(installation: InstallationIdentity | undefined): string | undefined {
+  return typeof installation === "string" ? installation : installation?.id;
+}
+
+function legacyInstallationMatches(
+  handoff: SessionHandoff,
+  installation: InstallationIdentity | undefined,
+): boolean {
+  if (!installation || typeof installation === "string" || installation.kind !== "wsl") return false;
+  if (handoff.distro && handoff.distro !== installation.distro) return false;
+  if (handoff.installationPath && handoff.installationPath !== installation.executablePath) return false;
+  return Boolean(handoff.distro || handoff.installationPath);
+}
 
 export function hasSessionHandoff(
   handoffs: SessionHandoff[] | undefined,
-  distro: string | undefined,
+  installation: InstallationIdentity | undefined,
   sessionPath: string,
 ): boolean {
-  return Boolean(distro && handoffs?.some(item => item.distro === distro && item.sessionPath === sessionPath));
-}
-
-export function addSessionHandoff(
-  handoffs: SessionHandoff[] | undefined,
-  handoff: SessionHandoff,
-  limit = 256,
-): SessionHandoff[] {
-  const remaining = (handoffs ?? []).filter(item =>
-    item.distro !== handoff.distro || item.sessionPath !== handoff.sessionPath,
-  );
-  return [...remaining.slice(-Math.max(0, limit - 1)), handoff];
-}
-
-export function removeSessionHandoff(
-  handoffs: SessionHandoff[] | undefined,
-  distro: string,
-  sessionPath: string,
-): SessionHandoff[] {
-  return (handoffs ?? []).filter(item => item.distro !== distro || item.sessionPath !== sessionPath);
+  const id = installationId(installation);
+  if (!id) return false;
+  return Boolean(handoffs?.some(handoff => {
+    if (!sessionMatchesIdentity(id, handoff.sessionPath, id, sessionPath)) return false;
+    if (handoff.installationId === id) return true;
+    if (legacyInstallationMatches(handoff, installation)) return true;
+    if (!installation || typeof installation === "string") return false;
+    // OMP executable upgrades can change the opaque installation ID without
+    // changing the physical session root. WSL paths additionally require the
+    // same distro; old modern leases without distro lock conservatively.
+    return installation.kind !== "wsl" || !handoff.distro || handoff.distro === installation.distro;
+  }));
 }

@@ -6,6 +6,7 @@ import type {
   OmpInstallation,
   RpcFrame,
   RuntimeDescriptor,
+  SessionMetadataPatch,
   SessionSummary,
   ThemeSnapshot,
 } from "../shared/contracts";
@@ -13,18 +14,33 @@ import { initialConversationState, reduceRpcFrame } from "./conversation";
 import { ConversationPane } from "./components/ConversationPane";
 import { BrandMark } from "./components/BrandMark";
 import { PermissionDialog } from "./components/PermissionDialog";
+import { NewSessionDialog } from "./components/NewSessionDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SessionDeleteDialog } from "./components/SessionDeleteDialog";
 import { SessionReclaimDialog } from "./components/SessionReclaimDialog";
+import { SessionRenameDialog } from "./components/SessionRenameDialog";
 import { SessionTrashDialog } from "./components/SessionTrashDialog";
 import { Sidebar } from "./components/Sidebar";
-import { addSessionHandoff, hasSessionHandoff, removeSessionHandoff } from "./session-handoff";
+import { hasSessionHandoff } from "./session-handoff";
+import { migrateLegacySettings, selectedInstallation } from "./installation-selection";
+import {
+  collectAvailableSessionGroups,
+  mergeSessions,
+  removeSessionSummary,
+  replaceSessionSummary,
+  sessionIdentity,
+  sessionMatchesIdentity,
+  sessionSummaryIdentity,
+} from "./session-collection";
+import { validateSessionTitle } from "./session-rename";
 import {
   attachTargetSessionPath,
+  chooseTargetInstallation,
   chooseTargetWorkspace,
   newSessionTarget,
   reconcileTarget,
   savedSessionTarget,
+  targetInstallationId,
   targetSession,
   targetSessionPath,
   targetWorkspace,
@@ -37,23 +53,11 @@ function desiredThemeMode(settings: AppSettings): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-function findInstallation(environment: EnvironmentInfo | undefined, settings: AppSettings | undefined): OmpInstallation | undefined {
-  if (!environment || !settings) return undefined;
-  return (
-    environment.installations.find(
-      item => item.distro === settings.selectedDistro && item.executablePath === settings.selectedInstallationPath,
-    ) ?? environment.installations[0]
-  );
-}
-
-function installationIdentity(installation: OmpInstallation | undefined): string | undefined {
-  if (!installation) return undefined;
-  return JSON.stringify([
-    installation.direct ? "direct" : "wsl",
-    installation.distro,
-    installation.executablePath,
-    installation.agentDir,
-  ]);
+function installationForSession(
+  environment: EnvironmentInfo | undefined,
+  session: SessionSummary,
+): OmpInstallation | undefined {
+  return environment?.installations.find(item => item.id === session.installationId);
 }
 
 export default function App(): React.JSX.Element {
@@ -76,9 +80,22 @@ export default function App(): React.JSX.Element {
   const [fatalError, setFatalError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [availableModels, setAvailableModels] = useState<OmpModelInfo[]>([]);
+  const [pendingRename, setPendingRename] = useState<SessionSummary>();
   const [pendingTrash, setPendingTrash] = useState<SessionSummary>();
   const [pendingDelete, setPendingDelete] = useState<SessionSummary>();
   const [pendingReclaim, setPendingReclaim] = useState<SessionSummary>();
+  const [newSessionDraft, setNewSessionDraft] = useState<{
+    installationId?: string;
+    workspace?: string;
+  }>();
+  const [selectingNewSessionWorkspace, setSelectingNewSessionWorkspace] = useState(false);
+  const selectingNewSessionWorkspaceRef = useRef(false);
+  const [creatingNewSession, setCreatingNewSession] = useState(false);
+  const [newSessionError, setNewSessionError] = useState<string>();
+  const [newSessionReturnFocus, setNewSessionReturnFocus] = useState<HTMLElement>();
+  const creatingNewSessionRef = useRef(false);
+  const [renamingSession, setRenamingSession] = useState(false);
+  const [renameError, setRenameError] = useState<string>();
   const [deletingSession, setDeletingSession] = useState(false);
   const [reclaimingSession, setReclaimingSession] = useState(false);
   const [editorUpdate, setEditorUpdate] = useState<{ key: string; messages: string[]; force?: boolean }>();
@@ -89,8 +106,14 @@ export default function App(): React.JSX.Element {
   const runtimeStartRef = useRef<Promise<RuntimeDescriptor> | undefined>(undefined);
   const pendingPromptsRef = useRef(new Map<string, string>());
   const activeTargetRef = useRef(activeTarget);
-  const installationRef = useRef<OmpInstallation | undefined>(undefined);
+  const settingsRef = useRef<AppSettings | undefined>(undefined);
+  const activeInstallationRef = useRef<OmpInstallation | undefined>(undefined);
+  const installationsRef = useRef<OmpInstallation[]>([]);
   const sessionsLoadGenerationRef = useRef(0);
+  const themeLoadGenerationRef = useRef(0);
+  const workspaceRequestGenerationRef = useRef(0);
+  const newSessionRequestGenerationRef = useRef(0);
+  const runtimeInstallationIdRef = useRef<string | undefined>(undefined);
 
   const setActiveTarget = useCallback((update: ActiveTarget | ((current: ActiveTarget) => ActiveTarget)): void => {
     setActiveTargetState(current => {
@@ -104,38 +127,96 @@ export default function App(): React.JSX.Element {
   const workspace = targetWorkspace(activeTarget);
   const activeSessionPath = targetSessionPath(activeTarget);
 
-  const installation = useMemo(() => findInstallation(environment, settings), [environment, settings]);
-  installationRef.current = installation;
+  const defaultInstallation = useMemo(() => selectedInstallation(environment, settings), [environment, settings]);
+  const activeInstallation = useMemo(() => {
+    const requestedId = targetInstallationId(activeTarget) ?? defaultInstallation?.id;
+    return environment?.installations.find(item => item.id === requestedId);
+  }, [activeTarget, defaultInstallation, environment]);
+  settingsRef.current = settings;
+  activeInstallationRef.current = activeInstallation;
+  installationsRef.current = environment?.installations ?? [];
 
-  const loadSessions = useCallback(async (): Promise<void> => {
-    if (!installation) return;
-    const requestedInstallation = installationIdentity(installation);
+  const loadSessions = useCallback(async (): Promise<{ failedInstallationIds: string[] }> => {
+    const requestedInstallations = [...installationsRef.current];
     const generation = sessionsLoadGenerationRef.current + 1;
     sessionsLoadGenerationRef.current = generation;
-    const next = await window.ompDesktop.sessions.list({
-      distro: installation.distro,
-      installationPath: installation.executablePath,
-      includeArchived: showArchived,
-    });
-    if (sessionsLoadGenerationRef.current !== generation
-      || installationIdentity(installationRef.current) !== requestedInstallation) return;
+    if (requestedInstallations.length === 0) {
+      setSessions([]);
+      return { failedInstallationIds: [] };
+    }
+    const requestedIdentity = JSON.stringify(requestedInstallations.map(item => item.id).sort());
+    const result = await collectAvailableSessionGroups(requestedInstallations.map(item => ({
+      installationId: item.id,
+      sessions: window.ompDesktop.sessions.list({
+        installationId: item.id,
+        includeArchived: showArchived,
+      }),
+    })));
+    const currentIdentity = JSON.stringify(installationsRef.current.map(item => item.id).sort());
+    if (sessionsLoadGenerationRef.current !== generation || currentIdentity !== requestedIdentity) {
+      return { failedInstallationIds: result.failedInstallationIds };
+    }
+    if (result.groups.length === 0 && result.failedInstallationIds.length > 0) {
+      const firstError = result.errors[0];
+      throw new Error(firstError instanceof Error
+        ? `无法刷新会话列表：${firstError.message}`
+        : "当前所有 OMP 运行环境都暂时无法刷新");
+    }
+    const next = mergeSessions(result.groups);
     setSessions(next);
     setActiveTarget(current => reconcileTarget(current, next));
-  }, [installation, setActiveTarget, showArchived]);
+    return { failedInstallationIds: result.failedInstallationIds };
+  }, [setActiveTarget, showArchived]);
+
+  const applySessionUpdate = useCallback((updated: SessionSummary): void => {
+    setSessions(current => !showArchived && updated.archived
+      ? removeSessionSummary(current, updated)
+      : replaceSessionSummary(current, updated));
+    setActiveTarget(current => {
+      if (!sessionMatchesIdentity(
+        targetInstallationId(current),
+        targetSessionPath(current),
+        updated.installationId,
+        updated.path,
+      )) return current;
+      return savedSessionTarget(updated, current.key);
+    });
+  }, [setActiveTarget, showArchived]);
+
+  const applySessionRemoval = useCallback((removed: SessionSummary): void => {
+    setSessions(current => removeSessionSummary(current, removed));
+  }, []);
+
+  const refreshSessionsAfterSuccess = useCallback(async (successMessage: string): Promise<void> => {
+    try {
+      const result = await loadSessions();
+      setNotice(result.failedInstallationIds.length > 0
+        ? `${successMessage}；部分离线运行环境将在恢复后刷新`
+        : successMessage);
+    } catch {
+      setNotice(`${successMessage}；会话列表暂未刷新，可稍后重试`);
+    }
+  }, [loadSessions]);
 
   const loadTheme = useCallback(async (): Promise<void> => {
-    if (!installation || !settings) return;
+    const installation = activeInstallationRef.current;
+    const currentSettings = settingsRef.current;
+    if (!installation || !currentSettings) return;
+    const generation = themeLoadGenerationRef.current + 1;
+    themeLoadGenerationRef.current = generation;
+    const requestedInstallationId = installation.id;
     const next = await window.ompDesktop.theme.get({
-      distro: installation.distro,
-      installationPath: installation.executablePath,
-      mode: desiredThemeMode(settings),
+      installationId: installation.id,
+      mode: desiredThemeMode(currentSettings),
     });
+    if (themeLoadGenerationRef.current !== generation
+      || activeInstallationRef.current?.id !== requestedInstallationId) return;
     setTheme(current => {
       if (current && JSON.stringify(current) === JSON.stringify(next)) return current;
       applyTheme(next);
       return next;
     });
-  }, [installation, settings]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -143,13 +224,29 @@ export default function App(): React.JSX.Element {
       .then(async ([detected, savedSettings]) => {
         if (!active) return;
         setEnvironment(detected);
-        const first = detected.installations[0];
-        const resolved = first && !savedSettings.selectedDistro
-          ? await window.ompDesktop.settings.update({
-              selectedDistro: first.distro,
-              selectedInstallationPath: first.executablePath,
-            })
-          : savedSettings;
+        const migration = migrateLegacySettings(detected, savedSettings);
+        const { handedOffSessions, ...ordinaryMigration } = migration;
+        let resolved = savedSettings;
+        const migrationErrors: string[] = [];
+        if (handedOffSessions) {
+          try {
+            resolved = await window.ompDesktop.settings.migrateHandoffs(handedOffSessions);
+          } catch (migrationError) {
+            migrationErrors.push(migrationError instanceof Error ? migrationError.message : String(migrationError));
+          }
+        }
+        if (Object.keys(ordinaryMigration).length > 0) {
+          try {
+            resolved = await window.ompDesktop.settings.update(ordinaryMigration);
+          } catch (migrationError) {
+            migrationErrors.push(migrationError instanceof Error ? migrationError.message : String(migrationError));
+          }
+        }
+        if (migrationErrors.length > 0) {
+          // Migration is optional. Preserve each unresolved value (especially
+          // conservative terminal leases) and still load the rest of the app.
+          setFatalError(`部分旧版设置暂未迁移，已按安全状态启动：${migrationErrors.join("；")}`);
+        }
         if (!active) return;
         setSettings(resolved);
         if (detected.installations.length === 0) setSettingsOpen(true);
@@ -161,15 +258,15 @@ export default function App(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (!installation) return;
-    sessionsLoadGenerationRef.current += 1;
-    setSessions([]);
     void loadSessions().catch(error => setFatalError(error instanceof Error ? error.message : String(error)));
-    void loadTheme().catch(error => setFatalError(error instanceof Error ? error.message : String(error)));
-  }, [installation, loadSessions, loadTheme]);
+    return () => {
+      sessionsLoadGenerationRef.current += 1;
+    };
+  }, [environment, loadSessions]);
 
   useEffect(() => {
-    if (!installation || !settings) return;
+    if (!activeInstallation || !settings) return;
+    void loadTheme().catch(error => setFatalError(error instanceof Error ? error.message : String(error)));
     const media = window.matchMedia("(prefers-color-scheme: light)");
     const refresh = (): void => void loadTheme().catch(() => undefined);
     media.addEventListener("change", refresh);
@@ -177,8 +274,17 @@ export default function App(): React.JSX.Element {
     return () => {
       media.removeEventListener("change", refresh);
       window.clearInterval(interval);
+      themeLoadGenerationRef.current += 1;
     };
-  }, [installation, settings, loadTheme]);
+  }, [activeInstallation, loadTheme, settings?.themeMode]);
+
+  useEffect(() => {
+    if (!defaultInstallation) return;
+    setActiveTarget(current => {
+      if (current.kind !== "new" || current.installationId || current.sessionPath) return current;
+      return chooseTargetInstallation(current, defaultInstallation.id, current.key);
+    });
+  }, [defaultInstallation, setActiveTarget]);
 
   useEffect(() => {
     if (!notice) return;
@@ -305,6 +411,7 @@ export default function App(): React.JSX.Element {
     });
     const stopStatus = window.ompDesktop.runtime.onStatus(event => {
       if (runtimeIdRef.current !== event.runtimeId) return;
+      runtimeInstallationIdRef.current = event.descriptor.installationId;
       setRuntime(current => ({
         ...event.descriptor,
         sessionPath: event.descriptor.sessionPath ?? current?.sessionPath,
@@ -314,6 +421,7 @@ export default function App(): React.JSX.Element {
       const releaseOwnership = (): void => {
         runtimeIdRef.current = undefined;
         runtimeSessionPathRef.current = undefined;
+        runtimeInstallationIdRef.current = undefined;
         runtimeTargetKeyRef.current = undefined;
         const pendingPrompts = [...pendingPromptsRef.current.values()];
         if (pendingPrompts.length > 0) setEditorUpdate({ key: crypto.randomUUID(), messages: pendingPrompts });
@@ -330,6 +438,7 @@ export default function App(): React.JSX.Element {
             return;
           }
           runtimeSessionPathRef.current = managed.sessionPath ?? runtimeSessionPathRef.current;
+          runtimeInstallationIdRef.current = managed.installationId;
           setRuntime(managed);
         }).catch(() => {
           // Retaining ownership is the safe choice when the main process cannot confirm exit.
@@ -342,17 +451,6 @@ export default function App(): React.JSX.Element {
       stopStatus();
     };
   }, [loadSessions, setActiveTarget]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        void newSession();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  });
 
   const stopRuntime = useCallback(async (): Promise<void> => {
     runtimeGenerationRef.current += 1;
@@ -371,12 +469,14 @@ export default function App(): React.JSX.Element {
       if (remaining) {
         runtimeIdRef.current = remaining.runtimeId;
         runtimeSessionPathRef.current = remaining.sessionPath;
+        runtimeInstallationIdRef.current = remaining.installationId;
         setRuntime(remaining);
       }
       throw error;
     }
     runtimeIdRef.current = undefined;
     runtimeSessionPathRef.current = undefined;
+    runtimeInstallationIdRef.current = undefined;
     runtimeTargetKeyRef.current = undefined;
     setRuntime(undefined);
     setPendingRequest(undefined);
@@ -387,8 +487,18 @@ export default function App(): React.JSX.Element {
   }, []);
 
   const startRuntime = useCallback(
-    async (requestedTarget: ActiveTarget = activeTargetRef.current): Promise<RuntimeDescriptor> => {
-      if (!installation || !settings) throw new Error("OMP 尚未准备好");
+    async (
+      requestedTarget: ActiveTarget = activeTargetRef.current,
+      reclaimHandoff = false,
+    ): Promise<RuntimeDescriptor> => {
+      if (!settings) throw new Error("OMP 尚未准备好");
+      const requestedSession = targetSession(requestedTarget);
+      const requestedInstallationId = targetInstallationId(requestedTarget)
+        ?? (requestedTarget.kind === "new" ? defaultInstallation?.id : undefined);
+      const requestedInstallation = requestedSession
+        ? installationForSession(environment, requestedSession)
+        : environment?.installations.find(item => item.id === requestedInstallationId);
+      if (!requestedInstallation) throw new Error("这个会话绑定的 OMP 运行环境当前不可用");
       const cwd = targetWorkspace(requestedTarget);
       if (!cwd) throw new Error("请先选择工作区");
       if (runtimeIdRef.current || runtimeStartRef.current) await stopRuntime();
@@ -396,9 +506,18 @@ export default function App(): React.JSX.Element {
       runtimeGenerationRef.current = generation;
       runtimeIdRef.current = undefined;
       runtimeSessionPathRef.current = targetSessionPath(requestedTarget);
+      runtimeInstallationIdRef.current = requestedInstallation.id;
       runtimeTargetKeyRef.current = requestedTarget.key;
       if (runtimeGenerationRef.current !== generation) throw new Error("会话切换已被新的操作取代");
-      setRuntime({ runtimeId: "starting", state: "starting", cwd, distro: installation.distro });
+      setRuntime({
+        runtimeId: "starting",
+        state: "starting",
+        cwd,
+        installationId: requestedInstallation.id,
+        runtimeKind: requestedInstallation.kind,
+        profile: requestedInstallation.profile,
+        distro: requestedInstallation.distro,
+      });
       setPendingRequest(undefined);
       setAvailableModels([]);
       const interruptedPrompts = [...pendingPromptsRef.current.values()];
@@ -409,13 +528,17 @@ export default function App(): React.JSX.Element {
       dispatchConversation({ type: "__reset" });
       let descriptor: RuntimeDescriptor | undefined;
       try {
-        const startPromise = window.ompDesktop.runtime.start({
-          distro: installation.distro,
-          installationPath: installation.executablePath,
+        const input = {
+          installationId: requestedInstallation.id,
           path: cwd,
           sessionPath: targetSessionPath(requestedTarget),
-          profile: settings.profile,
-        });
+        };
+        const startPromise = reclaimHandoff && input.sessionPath
+          ? window.ompDesktop.sessions.reclaim({ ...input, sessionPath: input.sessionPath }).then(result => {
+            setSettings(result.settings);
+            return result.descriptor;
+          })
+          : window.ompDesktop.runtime.start(input);
         runtimeStartRef.current = startPromise;
         try {
           descriptor = await startPromise;
@@ -428,6 +551,7 @@ export default function App(): React.JSX.Element {
         }
         runtimeIdRef.current = descriptor.runtimeId;
         runtimeSessionPathRef.current = descriptor.sessionPath;
+        runtimeInstallationIdRef.current = descriptor.installationId;
         setRuntime(descriptor);
         await window.ompDesktop.runtime.send(descriptor.runtimeId, {
           id: `state-${crypto.randomUUID()}`,
@@ -458,33 +582,203 @@ export default function App(): React.JSX.Element {
           const [remaining] = await window.ompDesktop.runtime.list().catch(() => []);
           runtimeIdRef.current = remaining?.runtimeId;
           runtimeSessionPathRef.current = remaining?.sessionPath;
+          runtimeInstallationIdRef.current = remaining?.installationId;
           if (!remaining) runtimeTargetKeyRef.current = undefined;
           setRuntime(remaining);
         }
         throw finalError;
       }
     },
-    [installation, settings, stopRuntime],
+    [defaultInstallation, environment, settings, stopRuntime],
   );
 
-  const newSession = useCallback(async (): Promise<void> => {
+  const openNewSessionDialog = useCallback((): void => {
+    if (switchingSession
+      || sending
+      || terminalBusy
+      || deletingSession
+      || reclaimingSession
+      || creatingNewSession
+      || ["starting", "aborting"].includes(runtime?.state ?? "")
+      || document.querySelector('[role="dialog"]')
+      || pendingRequest
+      || pendingRename
+      || pendingTrash
+      || pendingDelete
+      || pendingReclaim
+      || settingsOpen
+      || newSessionDraft) return;
+    const preferredInstallation = defaultInstallation
+      ?? environment?.installations.find(item => item.profile === undefined)
+      ?? environment?.installations[0];
+    newSessionRequestGenerationRef.current += 1;
+    setNewSessionError(undefined);
+    setNewSessionReturnFocus(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
+    setNewSessionDraft({ installationId: preferredInstallation?.id });
+  }, [
+    creatingNewSession,
+    defaultInstallation,
+    deletingSession,
+    environment,
+    newSessionDraft,
+    pendingDelete,
+    pendingReclaim,
+    pendingRename,
+    pendingRequest,
+    pendingTrash,
+    reclaimingSession,
+    runtime?.state,
+    sending,
+    settingsOpen,
+    switchingSession,
+    terminalBusy,
+  ]);
+
+  const cancelNewSessionDialog = useCallback((): void => {
+    if (creatingNewSession) return;
+    newSessionRequestGenerationRef.current += 1;
+    setNewSessionError(undefined);
+    setNewSessionDraft(undefined);
+    selectingNewSessionWorkspaceRef.current = false;
+    setSelectingNewSessionWorkspace(false);
+  }, [creatingNewSession]);
+
+  useEffect(() => {
+    if (newSessionDraft || creatingNewSession || !newSessionReturnFocus) return;
+    const target = newSessionReturnFocus;
+    setNewSessionReturnFocus(undefined);
+    window.requestAnimationFrame(() => {
+      if (target.isConnected && !(target instanceof HTMLButtonElement && target.disabled)) target.focus();
+      else document.querySelector<HTMLTextAreaElement>(".composer textarea:not(:disabled)")?.focus();
+    });
+  }, [creatingNewSession, newSessionDraft, newSessionReturnFocus]);
+
+  const selectNewSessionInstallation = (installationId: string): void => {
+    if (!environment?.installations.some(item => item.id === installationId)) {
+      setNewSessionError("所选 OMP 运行位置当前不可用");
+      return;
+    }
+    newSessionRequestGenerationRef.current += 1;
+    setNewSessionError(undefined);
+    setNewSessionDraft(current => current
+      ? {
+          installationId,
+          ...(current.installationId === installationId && current.workspace
+            ? { workspace: current.workspace }
+            : {}),
+        }
+      : current);
+  };
+
+  const chooseNewSessionWorkspace = async (): Promise<void> => {
+    const draft = newSessionDraft;
+    if (selectingNewSessionWorkspaceRef.current || creatingNewSessionRef.current) return;
+    if (!draft?.installationId) {
+      setNewSessionError("请先选择 Windows 或 WSL，以及对应的 OMP Profile");
+      return;
+    }
+    const requestGeneration = newSessionRequestGenerationRef.current + 1;
+    newSessionRequestGenerationRef.current = requestGeneration;
+    selectingNewSessionWorkspaceRef.current = true;
+    setSelectingNewSessionWorkspace(true);
+    setNewSessionError(undefined);
+    try {
+      const selected = await window.ompDesktop.system.chooseWorkspace(draft.installationId);
+      if (!selected || newSessionRequestGenerationRef.current !== requestGeneration) return;
+      setNewSessionDraft(current => current?.installationId === draft.installationId
+        ? { ...current, workspace: selected }
+        : current);
+    } catch (error) {
+      setNewSessionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      selectingNewSessionWorkspaceRef.current = false;
+      setSelectingNewSessionWorkspace(false);
+    }
+  };
+
+  const confirmNewSession = async (): Promise<void> => {
+    const draft = newSessionDraft;
+    if (creatingNewSessionRef.current || selectingNewSessionWorkspace) return;
+    if (!draft?.installationId || !draft.workspace) {
+      setNewSessionError("请选择运行位置、OMP Profile 和项目目录");
+      return;
+    }
+    if (switchingSession
+      || sending
+      || terminalBusy
+      || deletingSession
+      || reclaimingSession
+      || ["starting", "aborting"].includes(runtime?.state ?? "")
+      || pendingRequest
+      || pendingRename
+      || pendingTrash
+      || pendingDelete
+      || pendingReclaim
+      || settingsOpen) {
+      setNewSessionError("另一项操作仍在进行，请完成后再创建新会话");
+      return;
+    }
+    const installation = environment?.installations.find(item => item.id === draft.installationId);
+    if (!installation) {
+      setNewSessionError("所选 OMP 运行位置当前不可用，请重新选择");
+      return;
+    }
+    creatingNewSessionRef.current = true;
+    setCreatingNewSession(true);
     setSwitchingSession(true);
+    setNewSessionError(undefined);
     try {
       await stopRuntime();
-      setActiveTarget(newSessionTarget());
+      workspaceRequestGenerationRef.current += 1;
+      newSessionRequestGenerationRef.current += 1;
+      const target = chooseTargetWorkspace(
+        newSessionTarget(crypto.randomUUID(), installation.id),
+        draft.workspace,
+      );
+      setEditorUpdate(undefined);
+      setActiveTarget(target);
       dispatchConversation({ type: "__reset" });
-      setNotice("新会话已建立，请为它选择工作区");
+      setNewSessionDraft(undefined);
+      setNotice("新会话已建立，可以开始与 OMP 对话");
+      const latestSettings = settingsRef.current;
+      try {
+        const updated = await window.ompDesktop.settings.update({
+          recentWorkspaces: {
+            ...latestSettings?.recentWorkspaces,
+            [installation.id]: draft.workspace,
+          },
+        });
+        setSettings(updated);
+      } catch (settingsError) {
+        setFatalError(`新会话已建立，但最近项目记录保存失败：${settingsError instanceof Error ? settingsError.message : String(settingsError)}`);
+      }
+    } catch (error) {
+      setNewSessionError(error instanceof Error ? error.message : String(error));
     } finally {
+      creatingNewSessionRef.current = false;
+      setCreatingNewSession(false);
       setSwitchingSession(false);
     }
-  }, [setActiveTarget, stopRuntime]);
+  };
 
-  const resumeSession = async (session: SessionSummary): Promise<RuntimeDescriptor> => {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        openNewSessionDialog();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openNewSessionDialog]);
+
+  const resumeSession = async (session: SessionSummary, reclaimHandoff = false): Promise<RuntimeDescriptor> => {
     if (switchingSession) throw new Error("另一项会话切换仍在进行");
     setSwitchingSession(true);
+    workspaceRequestGenerationRef.current += 1;
     try {
       const nextTarget = savedSessionTarget(session);
-      const descriptor = await startRuntime(nextTarget);
+      const descriptor = await startRuntime(nextTarget, reclaimHandoff);
       setActiveTarget(nextTarget);
       return descriptor;
     } finally {
@@ -493,7 +787,11 @@ export default function App(): React.JSX.Element {
   };
 
   const openSession = async (session: SessionSummary): Promise<void> => {
-    const handedOff = hasSessionHandoff(settings?.handedOffSessions, installation?.distro, session.path);
+    const handedOff = hasSessionHandoff(
+      settings?.handedOffSessions,
+      installationForSession(environment, session),
+      session.path,
+    );
     if (handedOff) {
       setPendingReclaim(session);
       return;
@@ -533,59 +831,84 @@ export default function App(): React.JSX.Element {
     }
   };
 
-  const chooseWorkspace = async (): Promise<void> => {
-    if (!installation) return;
-    const currentTarget = activeTargetRef.current;
-    if (currentTarget.kind !== "new" || currentTarget.sessionPath || runtimeIdRef.current || runtimeStartRef.current) {
-      setFatalError("已保存的会话使用自己的工作区；请先新建会话，再选择工作区");
-      return;
-    }
-    const selected = await window.ompDesktop.system.chooseWorkspace(installation.distro);
-    if (!selected) return;
-    setActiveTarget(current => chooseTargetWorkspace(current, selected));
-    const updated = await window.ompDesktop.settings.update({ lastWorkspace: selected });
-    setSettings(updated);
-    setNotice("工作区已绑定到当前新会话");
-  };
-
   const updateSettings = async (patch: Partial<AppSettings>): Promise<void> => {
-    let changingRuntimeEnvironment = false;
     try {
-      changingRuntimeEnvironment = (patch.selectedDistro !== undefined && patch.selectedDistro !== settings?.selectedDistro)
-        || (patch.selectedInstallationPath !== undefined
-          && patch.selectedInstallationPath !== settings?.selectedInstallationPath);
-      if (changingRuntimeEnvironment) {
-        setSwitchingSession(true);
-        await stopRuntime();
-        setActiveTarget(newSessionTarget());
-        dispatchConversation({ type: "__reset" });
-      }
       const updated = await window.ompDesktop.settings.update(patch);
       setSettings(updated);
+      const selectedInstallationId = patch.selectedInstallationId;
+      const currentTarget = activeTargetRef.current;
+      if (selectedInstallationId
+        && environment?.installations.some(item => item.id === selectedInstallationId)
+        && currentTarget.kind === "new"
+        && !currentTarget.sessionPath
+        && !runtimeIdRef.current
+        && !runtimeStartRef.current) {
+        const nextTarget = chooseTargetInstallation(currentTarget, selectedInstallationId);
+        if (nextTarget !== currentTarget) {
+          workspaceRequestGenerationRef.current += 1;
+          setActiveTarget(nextTarget);
+          dispatchConversation({ type: "__reset" });
+        }
+      }
     } catch (error) {
       setFatalError(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (changingRuntimeEnvironment) setSwitchingSession(false);
     }
   };
 
-  const updateSession = async (session: SessionSummary, patch: { pinned?: boolean; archived?: boolean }): Promise<void> => {
+  const updateSession = async (session: SessionSummary, patch: SessionMetadataPatch): Promise<void> => {
     setFatalError(undefined);
     try {
-      if (!installation) throw new Error("OMP 安装环境尚未准备好");
-      await window.ompDesktop.sessions.update({
-        distro: installation.distro,
-        installationPath: installation.executablePath,
+      if (!installationForSession(environment, session)) throw new Error("这个会话绑定的 OMP 运行环境当前不可用");
+      const updated = await window.ompDesktop.sessions.update({
+        installationId: session.installationId,
         path: session.path,
       }, patch);
-      await loadSessions();
+      applySessionUpdate(updated);
+      await refreshSessionsAfterSuccess("会话设置已保存");
     } catch (error) {
       setFatalError(error instanceof Error ? error.message : String(error));
     }
   };
 
-  const sessionIsHandedOff = (session: SessionSummary): boolean =>
-    hasSessionHandoff(settings?.handedOffSessions, installation?.distro, session.path);
+  const sessionIsHandedOff = (session: SessionSummary): boolean => hasSessionHandoff(
+    settings?.handedOffSessions,
+    installationForSession(environment, session),
+    session.path,
+  );
+
+  const requestRename = (session: SessionSummary): void => {
+    setFatalError(undefined);
+    setRenameError(undefined);
+    setPendingRename(session);
+  };
+
+  const renameSession = async (value: string): Promise<void> => {
+    if (!pendingRename) return;
+    const validation = validateSessionTitle(value);
+    if (!validation.valid) {
+      setRenameError(validation.error);
+      return;
+    }
+    if (!installationForSession(environment, pendingRename)) {
+      setRenameError("OMP 安装环境尚未准备好");
+      return;
+    }
+    setRenamingSession(true);
+    setRenameError(undefined);
+    try {
+      const updated = await window.ompDesktop.sessions.update({
+        installationId: pendingRename.installationId,
+        path: pendingRename.path,
+      }, { displayTitle: validation.title });
+      applySessionUpdate(updated);
+      setPendingRename(undefined);
+      await refreshSessionsAfterSuccess("会话名称已更新");
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRenamingSession(false);
+    }
+  };
 
   const requestTrash = (session: SessionSummary): void => {
     if (sessionIsHandedOff(session)) {
@@ -604,26 +927,40 @@ export default function App(): React.JSX.Element {
   };
 
   const trashSession = async (): Promise<void> => {
-    if (!pendingTrash || !installation) return;
+    if (!pendingTrash) return;
     const session = pendingTrash;
-    const ownsSession = activeSessionPath === session.path || runtimeSessionPathRef.current === session.path;
+    const sessionInstallation = installationForSession(environment, session);
+    if (!sessionInstallation) {
+      setFatalError("这个会话绑定的 OMP 运行环境当前不可用");
+      return;
+    }
+    const ownsSession = sessionMatchesIdentity(
+      targetInstallationId(activeTargetRef.current),
+      targetSessionPath(activeTargetRef.current),
+      session.installationId,
+      session.path,
+    ) || sessionMatchesIdentity(
+      runtimeInstallationIdRef.current,
+      runtimeSessionPathRef.current,
+      session.installationId,
+      session.path,
+    );
     setDeletingSession(true);
     setFatalError(undefined);
     try {
       if (sessionIsHandedOff(session)) throw new Error("原始 OMP 终端仍可能正在使用该会话");
       if (ownsSession) await stopRuntime();
       await window.ompDesktop.sessions.trash({
-        distro: installation.distro,
-        installationPath: installation.executablePath,
+        installationId: sessionInstallation.id,
         path: session.path,
       });
+      applySessionRemoval(session);
       if (ownsSession) {
-        setActiveTarget(newSessionTarget());
+        setActiveTarget(newSessionTarget(crypto.randomUUID(), defaultInstallation?.id));
         dispatchConversation({ type: "__reset" });
       }
       setPendingTrash(undefined);
-      setNotice("会话已移到可恢复回收站");
-      await loadSessions();
+      await refreshSessionsAfterSuccess("会话已移到可恢复回收站");
     } catch (error) {
       setFatalError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -632,26 +969,40 @@ export default function App(): React.JSX.Element {
   };
 
   const deleteSessionPermanently = async (): Promise<void> => {
-    if (!pendingDelete || !installation) return;
+    if (!pendingDelete) return;
     const session = pendingDelete;
-    const ownsSession = activeSessionPath === session.path || runtimeSessionPathRef.current === session.path;
+    const sessionInstallation = installationForSession(environment, session);
+    if (!sessionInstallation) {
+      setFatalError("这个会话绑定的 OMP 运行环境当前不可用");
+      return;
+    }
+    const ownsSession = sessionMatchesIdentity(
+      targetInstallationId(activeTargetRef.current),
+      targetSessionPath(activeTargetRef.current),
+      session.installationId,
+      session.path,
+    ) || sessionMatchesIdentity(
+      runtimeInstallationIdRef.current,
+      runtimeSessionPathRef.current,
+      session.installationId,
+      session.path,
+    );
     setDeletingSession(true);
     setFatalError(undefined);
     try {
       if (sessionIsHandedOff(session)) throw new Error("原始 OMP 终端仍可能正在使用该会话");
       if (ownsSession) await stopRuntime();
       await window.ompDesktop.sessions.delete({
-        distro: installation.distro,
-        installationPath: installation.executablePath,
+        installationId: sessionInstallation.id,
         path: session.path,
       });
+      applySessionRemoval(session);
       if (ownsSession) {
-        setActiveTarget(newSessionTarget());
+        setActiveTarget(newSessionTarget(crypto.randomUUID(), defaultInstallation?.id));
         dispatchConversation({ type: "__reset" });
       }
       setPendingDelete(undefined);
-      setNotice("会话及其附件已彻底删除");
-      await loadSessions();
+      await refreshSessionsAfterSuccess("会话及其附件已彻底删除");
     } catch (error) {
       setFatalError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -660,15 +1011,17 @@ export default function App(): React.JSX.Element {
   };
 
   const reclaimSession = async (): Promise<void> => {
-    if (!pendingReclaim || !settings || !installation) return;
+    if (!pendingReclaim || !settings) return;
     const session = pendingReclaim;
+    const sessionInstallation = installationForSession(environment, session);
+    if (!sessionInstallation) {
+      setFatalError("这个会话绑定的 OMP 运行环境当前不可用");
+      return;
+    }
     setReclaimingSession(true);
     setFatalError(undefined);
     try {
-      await resumeSession(session);
-      const handedOffSessions = removeSessionHandoff(settings.handedOffSessions, installation.distro, session.path);
-      const updated = await window.ompDesktop.settings.update({ handedOffSessions });
-      setSettings(updated);
+      await resumeSession(session, true);
       setPendingReclaim(undefined);
     } catch (error) {
       setFatalError(error instanceof Error ? error.message : String(error));
@@ -678,11 +1031,26 @@ export default function App(): React.JSX.Element {
   };
 
   const openTerminal = async (session?: SessionSummary): Promise<void> => {
-    if (!installation || !settings) return;
+    if (!settings) return;
     const selectedSession = session ?? activeSession;
-    const isCurrentSession = !session
-      || session.path === activeSessionPath
-      || session.path === runtimeSessionPathRef.current;
+    const terminalInstallation = selectedSession
+      ? installationForSession(environment, selectedSession)
+      : activeInstallation;
+    if (!terminalInstallation) {
+      setFatalError("这个会话绑定的 OMP 运行环境当前不可用");
+      return;
+    }
+    const isCurrentSession = !session || sessionMatchesIdentity(
+      targetInstallationId(activeTargetRef.current),
+      targetSessionPath(activeTargetRef.current),
+      session.installationId,
+      session.path,
+    ) || sessionMatchesIdentity(
+      runtimeInstallationIdRef.current,
+      runtimeSessionPathRef.current,
+      session.installationId,
+      session.path,
+    );
     const cwd = selectedSession?.cwd ?? workspace;
     if (!cwd) return;
     const sessionPath = isCurrentSession
@@ -692,7 +1060,7 @@ export default function App(): React.JSX.Element {
       setFatalError("请先在桌面端发送消息并创建会话，再交给原始 OMP 终端");
       return;
     }
-    if (sessionPath && hasSessionHandoff(settings.handedOffSessions, installation.distro, sessionPath)) {
+    if (sessionPath && hasSessionHandoff(settings.handedOffSessions, terminalInstallation, sessionPath)) {
       setFatalError("该会话已经交给原始 OMP 终端；请勿重复启动同一会话");
       return;
     }
@@ -700,47 +1068,22 @@ export default function App(): React.JSX.Element {
     setTerminalBusy(true);
     try {
       if (isCurrentSession) await stopRuntime();
-      const previousHandoffs = settings.handedOffSessions ?? [];
-      const pendingHandoffs = addSessionHandoff(previousHandoffs, {
-        distro: installation.distro,
-        installationPath: installation.executablePath,
-        sessionPath,
-        cwd,
-        handedOffAt: new Date().toISOString(),
-      });
-      const pendingSettings = await window.ompDesktop.settings.update({ handedOffSessions: pendingHandoffs });
-      setSettings(pendingSettings);
-      await window.ompDesktop.system.openTerminal({
-        distro: installation.distro,
-        installationPath: installation.executablePath,
+      const updated = await window.ompDesktop.system.handoffToTerminal({
+        installationId: terminalInstallation.id,
         path: cwd,
         sessionPath,
-        profile: settings.profile,
       });
+      setSettings(updated);
       if (isCurrentSession) {
-        setActiveTarget(newSessionTarget());
+        setActiveTarget(newSessionTarget(crypto.randomUUID(), defaultInstallation?.id));
         dispatchConversation({ type: "__reset" });
       }
       setNotice(isCurrentSession
         ? "会话已交给原始 OMP 终端；桌面端已切换到新会话"
         : "会话已在新的原始 OMP 终端窗口中打开");
     } catch (error) {
-      if (sessionPath) {
-        // A stale lease is safer than allowing two writers. Only remove the
-        // pending lease if the terminal definitely failed to start and the
-        // rollback itself succeeds.
-        const handedOffSessions = removeSessionHandoff(
-          settings.handedOffSessions,
-          installation.distro,
-          sessionPath,
-        );
-        try {
-          const rolledBack = await window.ompDesktop.settings.update({ handedOffSessions });
-          setSettings(rolledBack);
-        } catch {
-          // Preserve the conservative in-memory lease written before launch.
-        }
-      }
+      const latestSettings = await window.ompDesktop.settings.get().catch(() => undefined);
+      if (latestSettings) setSettings(latestSettings);
       setFatalError(error instanceof Error ? error.message : String(error));
     } finally {
       setTerminalBusy(false);
@@ -802,13 +1145,15 @@ export default function App(): React.JSX.Element {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return sessions;
     return sessions.filter(session =>
-      [session.title, session.cwd, session.projectName, ...session.tags].some(value => value.toLowerCase().includes(normalized)),
+      [session.title, session.cwd, session.projectName, session.runtimeLabel, ...session.tags]
+        .some(value => value.toLowerCase().includes(normalized)),
     );
   }, [query, sessions]);
 
   const workspaceSelectable = activeTarget.kind === "new"
     && !activeTarget.sessionPath
     && !runtime
+    && Boolean(activeInstallation)
     && !switchingSession;
   const transitionBusy = switchingSession
     || sending
@@ -816,9 +1161,13 @@ export default function App(): React.JSX.Element {
     || deletingSession
     || reclaimingSession
     || ["starting", "aborting"].includes(runtime?.state ?? "");
-  const handedOffPaths = (settings?.handedOffSessions ?? [])
-    .filter(item => item.distro === installation?.distro)
-    .map(item => item.sessionPath);
+  const activeTargetInstallationId = targetInstallationId(activeTarget) ?? activeInstallation?.id;
+  const activeSessionKey = activeTargetInstallationId && activeSessionPath
+    ? sessionIdentity(activeTargetInstallationId, activeSessionPath)
+    : undefined;
+  const handedOffSessionKeys = sessions
+    .filter(session => sessionIsHandedOff(session))
+    .map(sessionSummaryIdentity);
 
   const respondToPermission = (frame: RpcFrame): void => {
     const runtimeId = runtimeIdRef.current;
@@ -834,7 +1183,7 @@ export default function App(): React.JSX.Element {
       <div className="boot-screen">
         <div className="boot-mark"><BrandMark /></div>
         <strong>正在连接 OMP</strong>
-        <span>检查 WSL、会话和主题…</span>
+        <span>检查 OMP 运行环境、会话和主题…</span>
       </div>
     );
   }
@@ -844,20 +1193,23 @@ export default function App(): React.JSX.Element {
       <Sidebar
         collapsed={sidebarCollapsed}
         sessions={filteredSessions}
-        activePath={activeSessionPath}
+        installations={environment.installations}
+        activeInstallationId={activeTargetInstallationId}
+        activeSessionKey={activeSessionKey}
         query={query}
         showArchived={showArchived}
         workspace={workspace}
         workspaceSelectable={workspaceSelectable}
         terminalAvailable={Boolean(activeSessionPath)}
-        handedOffPaths={handedOffPaths}
+        handedOffSessionKeys={handedOffSessionKeys}
         switching={transitionBusy}
         onCollapse={() => setSidebarCollapsed(value => !value)}
         onQuery={setQuery}
         onToggleArchived={() => setShowArchived(value => !value)}
-        onNew={() => void newSession().catch(error => setFatalError(error instanceof Error ? error.message : String(error)))}
-        onChooseWorkspace={() => void chooseWorkspace().catch(error => setFatalError(error instanceof Error ? error.message : String(error)))}
+        onNew={openNewSessionDialog}
+        onChooseWorkspace={openNewSessionDialog}
         onOpen={session => void openSession(session)}
+        onRename={requestRename}
         onPin={session => void updateSession(session, { pinned: !session.pinned })}
         onArchive={session => void updateSession(session, { archived: !session.archived })}
         onTrash={requestTrash}
@@ -882,7 +1234,7 @@ export default function App(): React.JSX.Element {
         availableModels={availableModels}
         onSubmit={submit}
         onStop={() => void stopRuntime().catch(error => setFatalError(error instanceof Error ? error.message : String(error)))}
-        onChooseWorkspace={() => void chooseWorkspace().catch(error => setFatalError(error instanceof Error ? error.message : String(error)))}
+        onChooseWorkspace={openNewSessionDialog}
         onOpenTerminal={() => void openTerminal()}
         onSelectModel={model => void selectModel(model)}
         onRefresh={() => void refreshSession()}
@@ -905,6 +1257,32 @@ export default function App(): React.JSX.Element {
       )}
 
       {pendingRequest && <PermissionDialog request={pendingRequest} onRespond={respondToPermission} />}
+      {newSessionDraft && (
+        <NewSessionDialog
+          installations={environment.installations}
+          selectedInstallationId={newSessionDraft.installationId}
+          workspace={newSessionDraft.workspace}
+          selectingWorkspace={selectingNewSessionWorkspace}
+          creating={creatingNewSession}
+          error={newSessionError}
+          onSelectInstallation={selectNewSessionInstallation}
+          onChooseWorkspace={() => void chooseNewSessionWorkspace()}
+          onCancel={cancelNewSessionDialog}
+          onConfirm={() => void confirmNewSession()}
+        />
+      )}
+      {pendingRename && (
+        <SessionRenameDialog
+          session={pendingRename}
+          saving={renamingSession}
+          error={renameError}
+          onCancel={() => {
+            setPendingRename(undefined);
+            setRenameError(undefined);
+          }}
+          onConfirm={title => void renameSession(title)}
+        />
+      )}
       {pendingTrash && (
         <SessionTrashDialog
           session={pendingTrash}

@@ -5,221 +5,135 @@
 <h1 align="center">OMP Desktop</h1>
 
 <p align="center">
-  An unofficial Windows desktop workspace for running
-  <a href="https://github.com/can1357/oh-my-pi">Oh My Pi (OMP)</a>
-  inside WSL2.
+  <strong>Bring terminal-first OMP into a focused desktop workspace.</strong><br />
+  Start faster, return to any session, switch models, and keep every project organized—while Oh My Pi remains the agent runtime.
 </p>
 
 <p align="center">
-  Start OMP faster, continue existing sessions, switch models, and manage your local workspace without replacing OMP's agent, tools, rules, extensions, or permission model.
+  <a href="https://github.com/Eijnewgnaw/omp-desktop/releases/latest"><strong>Download for Windows</strong></a>
+  · <a href="#what-you-can-do">Explore features</a>
+  · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/Eijnewgnaw/omp-desktop/actions/workflows/ci.yml"><img src="https://github.com/Eijnewgnaw/omp-desktop/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
-  <a href="https://github.com/Eijnewgnaw/omp-desktop/releases"><img src="https://img.shields.io/github/v/release/Eijnewgnaw/omp-desktop?include_prereleases&label=release" alt="Latest release" /></a>
+  <a href="https://github.com/Eijnewgnaw/omp-desktop/releases"><img src="https://img.shields.io/github/v/release/Eijnewgnaw/omp-desktop?label=release" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-658f90" alt="MIT License" /></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%2B%20WSL2-4b8bbe" alt="Windows and WSL2" />
-  <img src="https://img.shields.io/badge/status-experimental%20alpha-d65f4b" alt="Experimental Alpha status" />
-  <img src="https://img.shields.io/badge/debugging-active-d6a84b" alt="Active debugging" />
+  <img src="https://img.shields.io/badge/platform-Windows%2011-4b8bbe" alt="Windows 11" />
+  <img src="https://img.shields.io/badge/runtime-Native%20%2B%20WSL2-7357a5" alt="Native Windows and WSL2 runtimes" />
 </p>
 
-<p align="center">
-  English · <a href="README.zh-CN.md">简体中文</a>
-</p>
+![OMP Desktop product overview](docs/images/omp-desktop-home.png)
 
-![OMP Desktop main window](docs/images/omp-desktop-home.png)
+<p align="center"><sub>English product preview. The v0.1.0 application interface is currently Simplified Chinese.</sub></p>
 
-> [!CAUTION]
-> **OMP Desktop is an experimental Alpha under active development and debugging.** The current release targets OMP running inside WSL2 only. Back up your OMP agent directory before testing session resume, terminal handoff, Trash, or permanent deletion. It has been integration-tested with OMP `17.2.12`; compatibility with other versions is best-effort.
+## OMP power, desktop flow
 
-## Why OMP Desktop?
+OMP Desktop is an independent, local-first desktop companion for [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi). It removes the friction around launching projects and finding sessions without replacing the part that matters: OMP still owns the agent, models, tools, rules, extensions, permissions, and conversation files.
 
-OMP is a powerful terminal-first agent. OMP Desktop adds a focused graphical workspace around the existing runtime:
+The result is a calmer way to work across many codebases while keeping the original terminal experience one click away.
 
-- Discover OMP installations across local WSL distributions.
-- Start a task after choosing a WSL workspace.
-- Find, open, and continue existing OMP JSONL sessions.
-- Search, pin, archive, restore, move sessions to a recoverable app trash, or permanently delete them with a separate typed confirmation.
-- Read paginated history and continue the same session through OMP RPC.
-- Select from the models reported by OMP and switch with OMP's native `set_model` RPC command.
-- Display streaming replies, reasoning, Markdown, code, and tool execution.
-- Handle OMP extension requests such as confirmation, selection, text input, and editor input.
-- Follow OMP's light, dark, custom, symbol, and color-blind theme settings.
-- Hand a session to a new, visible Windows Terminal window and require an explicit reclaim before the desktop can resume it again.
+## What you can do
 
-OMP remains the only agent runtime and source of truth. The desktop app does not implement a second agent or copy OMP's decision logic.
+| | Feature | What it gives you |
+| --- | --- | --- |
+| **01** | **One runtime, profile, and workspace per session** | Click New session, choose Windows or WSL, then select that location's OMP Profile and project folder. Return to the exact combination later. |
+| **02** | **Continue real OMP sessions** | Browse local OMP JSONL history, reopen an earlier task, and keep talking through OMP's native RPC runtime. |
+| **03** | **Model selection** | Choose from the models reported by OMP and switch through OMP's own `set_model` command. |
+| **04** | **A session library** | Search, rename, pin, archive, restore, move to Trash, or permanently delete sessions from one sidebar. |
+| **05** | **Rich agent activity** | Follow streaming replies, reasoning, Markdown, code, tool execution, and extension confirmation requests. |
+| **06** | **Theme continuity** | Match OMP's light, dark, custom, symbol, and color-blind theme settings instead of maintaining a disconnected palette. |
 
-## Project status
+## Built around session continuity
 
-| Component | Status |
-| --- | --- |
-| Windows 11 x64 | Primary release target |
-| Windows desktop + OMP in WSL2 | Current experimental target; actively debugging |
-| Windows desktop + native Windows OMP | Planned; **not supported by the current Alpha** |
-| OMP `17.2.12` | Tested |
-| Other OMP versions | Best-effort Alpha compatibility |
-| Linux under WSLg | Development compatibility mode |
-| macOS / native Linux desktop | Not currently supported |
-| Installer signing | Not yet available |
-| Automatic updates | Not yet available |
-| Application language | Primarily Simplified Chinese in the current Alpha |
+Start a new task without carrying over the previous folder. **New session opens one setup dialog**: its top level contains only **Windows** and **WSL**, followed by the Profiles available in that location and a project-folder picker. Profiles stay visually subordinate to those two locations while remaining safely isolated underneath, with their own agent directory, sessions, theme, metadata, and recent workspace. Reopen a saved task with that exact environment and working directory; changing the default for future tasks never retargets saved sessions. Native `C:\...` paths and WSL `/...` paths stay isolated—OMP Desktop never silently translates or merges them.
 
-The installer is not code-signed yet, so Windows SmartScreen may show an **Unknown publisher** warning. Download builds only from this repository's Releases page.
+Need the terminal? Hand the session to a visible Windows Terminal window. OMP Desktop releases its RPC runtime first and records a handoff lock, so the desktop cannot silently open a second writer for the same JSONL. Close terminal OMP and explicitly reclaim the session when you want it back in the app.
 
-## Requirements
+## Session controls you can understand
+
+**Move to Trash** and **Delete permanently** are deliberately different actions:
+
+- **Move to Trash** relocates the indexed JSONL and its adjacent artifact folder to `<OMP data directory>/trash/omp-desktop/`, where they can be recovered manually. Without an XDG data override, the data directory is normally the OMP agent directory.
+- **Delete permanently** opens a dedicated warning dialog, identifies the exact session, and deletes it only after you click the destructive confirmation button. It cannot be undone.
+
+Before handoff, Trash, or permanent deletion, the app verifies that the desktop-owned OMP runtime has actually stopped. Paths, installation identity, session indexing, file type, and containment inside the OMP sessions directory are checked again in the main process.
+
+## OMP stays the source of truth
+
+```mermaid
+flowchart LR
+  UI["OMP Desktop"] -->|"validated local IPC"| Host["Desktop host"]
+  Host -->|"native RPC"| Win["Windows OMP"]
+  Host -->|"supervised WSL RPC"| WSL["WSL OMP"]
+  Win --> Agent["Models · tools · rules · extensions"]
+  WSL --> Agent
+  Win --> Sessions["Isolated OMP JSONL sessions"]
+  WSL --> Sessions
+  Host --> Metadata["App-only labels and preferences"]
+```
+
+- OMP handles every model request, tool call, permission decision, extension, and session write.
+- OMP Desktop does not install OMP, store provider API keys, upload conversations, collect telemetry, or rewrite session content.
+- Desktop-only names, pins, archive state, and preferences live in a separate local SQLite database, isolated by OMP installation, Profile, and runtime environment.
+
+## Get started
+
+### Requirements
 
 - Windows 11 x64
-- WSL2 with at least one installed Linux distribution
-- A working OMP installation inside that distribution
-- OMP already configured with the models, credentials, tools, extensions, and rules you want to use
-- Windows Terminal for the terminal handoff feature
+- A working, already configured OMP installation on native Windows, inside WSL2, or both
+- Windows Terminal for terminal handoff
 
-Verify OMP inside WSL before installing the desktop app:
+Verify native Windows OMP in PowerShell:
+
+```powershell
+& "$env:LOCALAPPDATA\omp\omp.exe" --version
+```
+
+Or verify OMP inside WSL:
 
 ```bash
 command -v omp
 omp --version
 ```
 
-OMP Desktop does not install or configure OMP for you.
+Then:
 
-## Installation
+1. Download the newest installer from [GitHub Releases](https://github.com/Eijnewgnaw/omp-desktop/releases/latest).
+2. Install and launch OMP Desktop.
+3. Click **New session** and choose **Windows** or **WSL** in the setup dialog.
+4. Select a **Profile** and project folder, create the session, and send your first message—or select an existing session to continue it in its original environment.
 
-1. Open the [Releases page](https://github.com/Eijnewgnaw/omp-desktop/releases).
-2. Download the newest `OMP-Desktop-*.exe` installer.
-3. Run the installer.
-4. Launch OMP Desktop and select the detected WSL installation.
-5. Click **New session**, choose that new session's WSL workspace, then send the first message. Existing sessions always reopen with the workspace stored in their own OMP JSONL.
+> [!NOTE]
+> The installer is not code-signed yet, so Windows SmartScreen may show **Unknown publisher**. Download builds only from this repository's Releases page.
 
-The session menu provides **Continue**, **Open in original terminal**, **Pin**, **Archive/Restore**, **Move to Trash**, and **Delete permanently**. Before handing an owned session to Windows Terminal, moving it, or deleting it, the app verifies that its desktop RPC runtime has stopped. A successful terminal handoff returns the composer to a blank new session and records a handoff lock. To resume that JSONL in the desktop again, first close OMP in the terminal and explicitly confirm **Reclaim session**.
+## Current compatibility
 
-**Move to Trash** is recoverable. It relocates the JSONL session plus its adjacent artifact directory under:
-
-```text
-<OMP agent directory>/trash/omp-desktop/
-```
-
-**Delete permanently** is a different action. It requires typing `永久删除` and then removes that exact indexed JSONL and its adjacent artifact directory. It cannot be undone.
-
-## How it works
-
-```mermaid
-flowchart LR
-  UI["React desktop UI"]
-  Main["Electron main process"]
-  OMP["OMP rpc-ui in WSL"]
-  Agent["Models, tools, rules, and extensions"]
-  Sessions["OMP JSONL sessions"]
-  Metadata["App-only SQLite metadata"]
-  Themes["OMP configuration and themes"]
-
-  UI -->|"validated IPC"| Main
-  Main -->|"wsl.exe + NDJSON RPC"| OMP
-  OMP --> Agent
-  OMP --> Sessions
-  Main -->|"read-only prefix scan"| Sessions
-  Main --> Metadata
-  Main --> Themes
-  Themes --> UI
-```
-
-The Windows build starts one supervised OMP `rpc-ui` process in WSL. Existing sessions are passed back to OMP through `--resume`; the app then requests OMP state, paginated history, and available models. Subsequent prompts and model changes go to that same runtime.
-
-Runtime replacement is serialized so only one session owns the desktop RPC connection. Shutdown first requests a graceful OMP abort and stdin close; if needed, the app terminates only the exact supervised WSL process group instead of stopping the entire distribution.
-
-## Data, privacy, and security
-
-OMP Desktop is local-first:
-
-- Model requests, tool calls, session writes, configuration, and extensions are handled by your local OMP installation.
-- The app reads only the beginning of each OMP JSONL file to build its session index.
-- It does not rewrite session content. OMP itself persists resumed conversations.
-- Pin, archive state, and app preferences live in a separate local SQLite database.
-- Moving to Trash and permanent deletion are separate, explicitly confirmed actions. Permanent deletion never uses the recoverable app trash.
-- The app collects no telemetry, uploads no conversations, and stores no model-provider API keys.
-
-The renderer uses context isolation, Electron sandboxing, web security, and no Node.js integration. File, process, and WSL operations are exposed through a small typed preload API with input and path validation. External navigation is denied by default; HTTP(S) links are handed to the system browser.
-
-This desktop shell is not a security boundary for OMP, its extensions, model providers, or code executed in your workspace. Review OMP's displayed intent and confirmation requests before allowing sensitive actions. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-## Theme integration
-
-OMP Desktop derives its interface from OMP's semantic theme configuration rather than maintaining an unrelated palette. It reads:
-
-- `theme.dark`
-- `theme.light`
-- `symbolPreset`
-- `colorBlindMode`
-- Custom themes from the OMP agent directory
-
-The interface follows the selected OMP light or dark theme and reacts to system appearance changes when configured to do so. Bundled theme attribution is recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Development
-
-Prerequisites: Node.js `22.20` or newer, npm, and a working OMP installation. Windows with WSL2 is required for complete packaged-app integration; WSLg can run the Linux development shell.
-
-```bash
-git clone git@github.com:Eijnewgnaw/omp-desktop.git
-cd omp-desktop
-npm ci
-npm run dev
-```
-
-Create a production build or Windows installer:
-
-```bash
-npm run build
-npm run dist -- --win --x64 --publish never
-```
-
-## Testing
-
-```bash
-npm run typecheck
-npm test
-npm run test:integration
-npm run test:e2e:resume
-```
-
-| Command | Purpose |
+| Environment | Status |
 | --- | --- |
-| `npm run typecheck` | Type-check main, preload, shared, and renderer code |
-| `npm test` | Run unit, boundary, lifecycle, trash, and terminal-launch tests |
-| `npm run test:integration` | Use real OMP to negotiate RPC, read state, and list models without sending a prompt |
-| `npm run test:e2e` | Run the visual Electron smoke test |
-| `npm run test:e2e:resume` | Use a fake OMP runtime to verify resume/send, model switching, continuation frames, error recovery, reconnects, terminal handoff, and new-session ownership without a model call |
-| `npm run build` | Produce production Electron bundles |
+| Windows 11 x64 + native Windows OMP | Supported v0.1.0 target; tested with OMP 17.2.15 |
+| Windows 11 x64 + OMP in WSL2 | Supported v0.1.0 target; tested with OMP 17.2.12 |
+| Default and named OMP Profiles | Supported as isolated choices beneath Windows or WSL |
+| Other OMP versions | Best-effort compatibility |
+| Application interface | Simplified Chinese in v0.1.0 |
+| WSLg Linux shell | Development use |
+| macOS / native Linux desktop | Not currently supported |
 
-## Repository structure
+## Where next
 
-```text
-src/
-  main/       WSL discovery, OMP lifecycle, session indexing, themes, and IPC
-  preload/    Minimal typed bridge exposed to the renderer
-  renderer/   React conversation and session-management interface
-  shared/     Cross-process contracts and generated OMP theme data
-tests/        Unit, integration, security, and Electron end-to-end tests
-docs/         Architecture notes and screenshots
-scripts/      Theme synchronization utilities
-build/        Application icons
-```
+- Wider OMP compatibility matrix
+- More extension widget and status rendering
+- Session tags, batch operations, filters, and an in-app Trash browser
+- Complete UI localization, signed installers, and safe updates
 
-## Roadmap
+## Learn more
 
-- Publish an OMP version compatibility matrix.
-- Improve extension widget and status rendering.
-- Add a Windows-native OMP backend. It will call Windows `omp.exe` directly, while the WSL backend will continue to call the selected distribution's `omp`; saved sessions will stay bound to their original backend and workspace.
-- Add editable session labels, tags, and an in-app trash browser.
-- Add batch session operations and cross-project filtering.
-- Add full English UI localization.
-- Provide signed installers and a safe update flow when release infrastructure is available.
+- [Development guide](docs/DEVELOPMENT.md) — setup, testing, packaging, and project conventions
+- [Architecture](docs/ARCHITECTURE.md) — runtime, session, RPC, theme, and security boundaries
+- [Security policy](SECURITY.md) — supported versions and private vulnerability reporting
+- [Contributing](CONTRIBUTING.md) — change principles and contribution checklist
+- [Changelog](CHANGELOG.md) — release history
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — licenses for bundled OMP theme data
 
-## Contributing
-
-Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before making a change. When reporting a bug, include the Windows version, WSL distribution, OMP version, OMP Desktop version, reproduction steps, and redacted diagnostics. Never include API keys, access tokens, or unredacted session files.
-
-## Acknowledgements and disclaimer
-
-OMP Desktop is built around [Oh My Pi](https://github.com/can1357/oh-my-pi). It is an independent community project and is not officially affiliated with or endorsed by the Oh My Pi authors. The Oh My Pi name, source code, and theme assets remain the property of their respective rights holders.
-
-OMP Desktop is released under the [MIT License](LICENSE).
+OMP Desktop is an independent community project and is not affiliated with or endorsed by the Oh My Pi authors. Oh My Pi's name, source code, and theme assets remain the property of their respective rights holders. OMP Desktop is released under the [MIT License](LICENSE).

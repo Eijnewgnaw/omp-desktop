@@ -3,22 +3,57 @@ import path from "node:path";
 import readline from "node:readline";
 
 const args = process.argv.slice(2);
-const agentDirectory = process.env.FAKE_OMP_AGENT_DIR;
 const logPath = process.env.FAKE_OMP_LOG;
+const profileIndex = args.indexOf("--profile");
+const profile = profileIndex >= 0 ? args[profileIndex + 1] : "default";
+const profileAgentDirectories = JSON.parse(process.env.FAKE_OMP_PROFILE_AGENT_DIRS || "{}");
+const agentDirectory = profile === "default"
+  ? process.env.FAKE_OMP_AGENT_DIR
+  : profileAgentDirectories[profile];
+const commandArgs = profileIndex >= 0
+  ? [...args.slice(0, profileIndex), ...args.slice(profileIndex + 2)]
+  : args;
 
 const appendLog = async entry => {
   if (!logPath) return;
   await fs.appendFile(logPath, `${JSON.stringify(entry)}\n`);
 };
 
-if (args.includes("--version")) {
+if (commandArgs.includes("--version")) {
   process.stdout.write("omp/17.2.12-fake\n");
   process.exit(0);
 }
 
-if (args[0] === "config" && args[1] === "path") {
+if (commandArgs[0] === "config" && commandArgs[1] === "path") {
   if (!agentDirectory) throw new Error("FAKE_OMP_AGENT_DIR is required");
   process.stdout.write(`${agentDirectory}\n`);
+  process.exit(0);
+}
+
+if (commandArgs.join("|") === "gc|--json|--wal") {
+  if (!agentDirectory) throw new Error("FAKE_OMP_AGENT_DIR is required");
+  process.stdout.write(`${JSON.stringify({
+    agentDir: agentDirectory,
+    apply: false,
+    wal: {
+      databases: [
+        { dbPath: path.join(agentDirectory, "history.db") },
+        { dbPath: path.join(agentDirectory, "models.db") },
+      ],
+    },
+  })}\n`);
+  process.exit(0);
+}
+
+if (commandArgs[0] === "config" && commandArgs[1] === "get") {
+  const key = commandArgs[2];
+  const values = {
+    "theme.dark": profile === "work" ? "dark-aurora" : "anthracite",
+    "theme.light": "light",
+    symbolPreset: "unicode",
+    colorBlindMode: "false",
+  };
+  process.stdout.write(`${values[key] ?? ""}\n`);
   process.exit(0);
 }
 
@@ -81,7 +116,7 @@ if (!resumePath) {
   ].join("\n"));
 }
 
-await appendLog({ event: "start", sessionPath: resumePath, effectiveSessionPath: sessionPath, cwd, pid: process.pid });
+await appendLog({ event: "start", profile, sessionPath: resumePath, effectiveSessionPath: sessionPath, cwd, pid: process.pid });
 const send = frame => process.stdout.write(`${JSON.stringify(frame)}\n`);
 send({ type: "ready", supportedProtocolVersions: [1, 2] });
 if (!resumePath) send({ type: "session_info_update", sessionFile: sessionPath });

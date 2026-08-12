@@ -1,5 +1,11 @@
 import Database from "better-sqlite3";
-import type { AppSettings, SessionMetadataPatch, SessionSummary } from "../shared/contracts";
+import type {
+  AppSettings,
+  OmpInstallation,
+  SessionMetadataPatch,
+  SessionSummary,
+} from "../shared/contracts";
+import { installationMetadataKey } from "./security";
 
 interface SessionMetadataRow {
   session_path: string;
@@ -59,8 +65,8 @@ export class MetadataStore {
     if (columns.some(column => column.name === "installation_key")) return;
 
     // V1 metadata cannot identify its originating installation. Preserve each row
-    // under a legacy key; the first installation that sees that exact path claims
-    // it atomically, so existing aliases/pins survive without leaking thereafter.
+    // under a legacy key until the Alpha settings identify its unique owner, so
+    // aliases/pins survive without leaking to whichever backend happens to list first.
     const migrate = this.#db.transaction(() => {
       this.#db.exec("ALTER TABLE session_metadata RENAME TO session_metadata_v1");
       this.#createSessionMetadataTable();
@@ -93,7 +99,7 @@ export class MetadataStore {
     return settings;
   }
 
-  updateSettings(patch: Partial<AppSettings>): AppSettings {
+  writeSettings(patch: Partial<AppSettings>): void {
     const statement = this.#db.prepare(`
       INSERT INTO app_settings (key, value_json) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
@@ -105,10 +111,36 @@ export class MetadataStore {
       }
     });
     transaction();
+  }
+
+  updateSettings(patch: Partial<AppSettings>): AppSettings {
+    this.writeSettings(patch);
     return this.getSettings();
   }
 
-  getSessionMetadata(installationKey: string, paths: string[]): Map<string, SessionMetadataRow> {
+  #isLegacyMetadataOwner(
+    installationKey: string,
+    installation: OmpInstallation | undefined,
+  ): boolean {
+    if (!installation || installation.profile !== undefined) return false;
+    if (installationMetadataKey(installation) !== installationKey) return false;
+    const settings = this.getSettings();
+    if (!settings.selectedDistro || !settings.selectedInstallationPath) return false;
+    if (installation.executablePath !== settings.selectedInstallationPath) return false;
+
+    // These deprecated fields are the provenance written by pre-v0.1.0 builds.
+    // selectedInstallationId is deliberately ignored because it is a mutable
+    // current UI selection and cannot prove who originally owned an unscoped row.
+    if (installation.kind === "wsl") return installation.distro === settings.selectedDistro;
+    return installation.kind === "linux-direct" && settings.selectedDistro === "direct";
+  }
+
+  getSessionMetadata(
+    installationKey: string,
+    paths: string[],
+    legacyClaimant?: OmpInstallation,
+    pathAliases: ReadonlyMap<string, string> = new Map(),
+  ): Map<string, SessionMetadataRow> {
     const result = new Map<string, SessionMetadataRow>();
     if (paths.length === 0) return result;
     const query = this.#db.prepare(`
@@ -116,19 +148,54 @@ export class MetadataStore {
       FROM session_metadata
       WHERE installation_key = ? AND session_path = ?
     `);
-    const claimLegacy = this.#db.prepare(`
-      UPDATE session_metadata
-      SET installation_key = ?
+    const claimLegacyRow = this.#db.prepare(`
+      UPDATE OR IGNORE session_metadata
+      SET installation_key = ?, session_path = ?
       WHERE installation_key = ? AND session_path = ?
     `);
+    const migrateScopedAlias = this.#db.prepare(`
+      UPDATE OR IGNORE session_metadata
+      SET session_path = ?
+      WHERE installation_key = ? AND session_path = ?
+    `);
+    const currentPaths = new Set(paths);
+    const aliasUseCount = new Map<string, number>();
+    for (const currentPath of currentPaths) {
+      const alias = pathAliases.get(currentPath);
+      if (alias) aliasUseCount.set(alias, (aliasUseCount.get(alias) ?? 0) + 1);
+    }
+    const claimLegacy = this.#isLegacyMetadataOwner(installationKey, legacyClaimant);
     const read = this.#db.transaction(() => {
-      for (const sessionPath of paths) {
+      for (const sessionPath of currentPaths) {
         let row = query.get(installationKey, sessionPath) as SessionMetadataRow | undefined;
+        const alias = pathAliases.get(sessionPath);
+        const aliasIsUnique = alias
+          && alias !== sessionPath
+          && !currentPaths.has(alias)
+          && aliasUseCount.get(alias) === 1;
         if (!row) {
-          const legacy = query.get(legacyInstallationKey, sessionPath) as SessionMetadataRow | undefined;
+          if (aliasIsUnique) {
+            // This is an in-scope path rebase, not an installation migration:
+            // only a row under the exact same installation key is eligible.
+            // UPDATE OR IGNORE makes an exact current row win even if one appears
+            // before this transaction reaches the alias.
+            migrateScopedAlias.run(sessionPath, installationKey, alias);
+            row = query.get(installationKey, sessionPath) as SessionMetadataRow | undefined;
+          }
+        }
+        if (!row && claimLegacy) {
+          let legacyPath = sessionPath;
+          let legacy = query.get(legacyInstallationKey, legacyPath) as SessionMetadataRow | undefined;
+          if (!legacy && aliasIsUnique) {
+            legacyPath = alias;
+            legacy = query.get(legacyInstallationKey, legacyPath) as SessionMetadataRow | undefined;
+          }
           if (legacy) {
-            claimLegacy.run(installationKey, legacyInstallationKey, sessionPath);
-            row = legacy;
+            // Claim and rebase in one statement. UPDATE OR IGNORE preserves the
+            // legacy row if an exact current row appears, and the re-read makes
+            // that exact row authoritative.
+            claimLegacyRow.run(installationKey, sessionPath, legacyInstallationKey, legacyPath);
+            row = query.get(installationKey, sessionPath) as SessionMetadataRow | undefined;
           }
         }
         if (row) result.set(sessionPath, row);
@@ -160,8 +227,9 @@ export class MetadataStore {
     installationKey: string,
     summary: SessionSummary,
     patch: SessionMetadataPatch,
+    legacyClaimant?: OmpInstallation,
   ): SessionSummary {
-    const current = this.getSessionMetadata(installationKey, [summary.path]).get(summary.path);
+    const current = this.getSessionMetadata(installationKey, [summary.path], legacyClaimant).get(summary.path);
     const displayTitle = patch.displayTitle === undefined ? current?.display_title ?? null : patch.displayTitle;
     const pinned = patch.pinned === undefined ? current?.pinned ?? 0 : Number(patch.pinned);
     const archived = patch.archived === undefined ? current?.archived ?? 0 : Number(patch.archived);
@@ -185,7 +253,7 @@ export class MetadataStore {
           updated_at = excluded.updated_at
       `)
       .run(installationKey, summary.path, displayTitle, pinned, archived, JSON.stringify(tags), new Date().toISOString());
-    const row = this.getSessionMetadata(installationKey, [summary.path]).get(summary.path);
+    const row = this.getSessionMetadata(installationKey, [summary.path], legacyClaimant).get(summary.path);
     return this.applyMetadata(summary, row);
   }
 

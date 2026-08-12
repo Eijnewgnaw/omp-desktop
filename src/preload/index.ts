@@ -4,8 +4,10 @@ import type {
   DeleteSessionInput,
   DeleteSessionResult,
   EnvironmentInfo,
+  HandoffSessionInput,
   OmpDesktopApi,
-  OpenTerminalInput,
+  ReclaimSessionInput,
+  ReclaimSessionResult,
   RpcFrame,
   RuntimeDescriptor,
   RuntimeFrameEnvelope,
@@ -16,7 +18,6 @@ import type {
   ThemeSnapshot,
   TrashSessionInput,
   TrashSessionResult,
-  WorkspaceInput,
 } from "../shared/contracts";
 
 const api: OmpDesktopApi = {
@@ -29,6 +30,7 @@ const api: OmpDesktopApi = {
       ipcRenderer.invoke("sessions:update", input, patch) as Promise<SessionSummary>,
     trash: (input: TrashSessionInput) => ipcRenderer.invoke("sessions:trash", input) as Promise<TrashSessionResult>,
     delete: (input: DeleteSessionInput) => ipcRenderer.invoke("sessions:delete", input) as Promise<DeleteSessionResult>,
+    reclaim: (input: ReclaimSessionInput) => ipcRenderer.invoke("sessions:reclaim", input) as Promise<ReclaimSessionResult>,
   },
   theme: {
     get: input => ipcRenderer.invoke("theme:get", input) as Promise<ThemeSnapshot>,
@@ -50,13 +52,15 @@ const api: OmpDesktopApi = {
     },
   },
   system: {
-    chooseWorkspace: (distro: string) => ipcRenderer.invoke("system:choose-workspace", distro) as Promise<string | null>,
-    openTerminal: (input: OpenTerminalInput) => ipcRenderer.invoke("system:open-terminal", input),
-    openPath: (input: WorkspaceInput) => ipcRenderer.invoke("system:open-path", input),
+    chooseWorkspace: (installationId: string) =>
+      ipcRenderer.invoke("system:choose-workspace", installationId) as Promise<string | null>,
+    handoffToTerminal: (input: HandoffSessionInput) =>
+      ipcRenderer.invoke("system:handoff-terminal", input) as Promise<AppSettings>,
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get") as Promise<AppSettings>,
     update: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch) as Promise<AppSettings>,
+    migrateHandoffs: handoffs => ipcRenderer.invoke("settings:migrate-handoffs", handoffs) as Promise<AppSettings>,
   },
 };
 

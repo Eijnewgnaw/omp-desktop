@@ -1,6 +1,6 @@
 {
   "name": "omp-desktop",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0",
   "private": true,
   "description": "An unofficial Windows and WSL desktop client for Oh My Pi",
   "license": "MIT",
@@ -27,6 +27,7 @@
     "test:integration": "OMP_INTEGRATION=1 vitest run tests/omp-rpc.integration.test.ts",
     "test:e2e": "npm run build && node tests/visual.e2e.mjs",
     "test:e2e:resume": "npm run build && node tests/resume.e2e.mjs",
+    "test:e2e:profile": "npm run build && node tests/profile.e2e.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
@@ -66,7 +67,9 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "win": {
       "icon": "build/icon.ico",

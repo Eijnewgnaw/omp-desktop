@@ -7,6 +7,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
+  PencilLine,
   Pin,
   PinOff,
   Plus,
@@ -16,19 +17,27 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { SessionSummary } from "../../shared/contracts";
+import type { OmpInstallation, OmpRuntimeKind, SessionSummary } from "../../shared/contracts";
+import { sessionSummaryIdentity } from "../session-collection";
+import { runtimeLocation, RUNTIME_LOCATION_LABELS } from "../runtime-location";
 import { BrandMark } from "./BrandMark";
+
+function sessionBackendLabel(kind: OmpRuntimeKind): string {
+  return RUNTIME_LOCATION_LABELS[runtimeLocation(kind)];
+}
 
 interface SidebarProps {
   collapsed: boolean;
   sessions: SessionSummary[];
-  activePath?: string;
+  installations: OmpInstallation[];
+  activeInstallationId?: string;
+  activeSessionKey?: string;
   query: string;
   showArchived: boolean;
   workspace?: string;
   workspaceSelectable: boolean;
   terminalAvailable: boolean;
-  handedOffPaths: string[];
+  handedOffSessionKeys: string[];
   switching: boolean;
   onCollapse(): void;
   onQuery(value: string): void;
@@ -36,6 +45,7 @@ interface SidebarProps {
   onNew(): void;
   onChooseWorkspace(): void;
   onOpen(session: SessionSummary): void;
+  onRename(session: SessionSummary): void;
   onPin(session: SessionSummary): void;
   onArchive(session: SessionSummary): void;
   onTrash(session: SessionSummary): void;
@@ -64,6 +74,7 @@ function relativeTime(value: string): string {
 export function Sidebar(props: SidebarProps): React.JSX.Element {
   const [menu, setMenu] = useState<SessionMenuState>();
   const menuRef = useRef<HTMLDivElement>(null);
+  const activeInstallation = props.installations.find(item => item.id === props.activeInstallationId);
 
   useEffect(() => {
     if (!menu) return;
@@ -89,7 +100,7 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
 
   const openMenu = (session: SessionSummary, target: HTMLElement): void => {
     const bounds = target.getBoundingClientRect();
-    const menuHeight = 286;
+    const menuHeight = 320;
     setMenu({
       session,
       top: Math.min(bounds.bottom + 5, window.innerHeight - menuHeight - 8),
@@ -149,16 +160,29 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         <span>Ctrl N</span>
       </button>
 
+      <div className="runtime-picker runtime-picker--readonly">
+        <Bot size={16} />
+        <div className="runtime-picker__body">
+          <small>{props.workspaceSelectable ? "新会话设置" : "会话运行环境"}</small>
+          <div className="runtime-picker__summary">
+            <strong>{activeInstallation ? sessionBackendLabel(activeInstallation.kind) : "尚未选择"}</strong>
+            {activeInstallation && (
+              <em>{activeInstallation.profile ? `Profile · ${activeInstallation.profile}` : "Default"}</em>
+            )}
+          </div>
+        </div>
+      </div>
+
       <button
         className={`workspace-picker${props.workspaceSelectable ? "" : " workspace-picker--readonly"}`}
         onClick={props.onChooseWorkspace}
         disabled={props.switching || !props.workspaceSelectable}
-        title={props.workspaceSelectable ? "为当前新会话选择工作区" : "工作区已绑定到这个会话"}
+        title={props.workspaceSelectable ? "打开新建会话设置" : "工作区已绑定到这个会话"}
       >
         <FolderOpen size={16} />
         <span>
-          <small>{props.workspaceSelectable ? "新会话工作区" : "会话工作区"}</small>
-          <strong>{props.workspace || "选择 WSL 目录后开始"}</strong>
+          <small>{props.workspaceSelectable ? "新建会话" : "会话工作区"}</small>
+          <strong>{props.workspace || "选择 Windows/WSL 与项目"}</strong>
         </span>
         <MoreHorizontal size={16} />
       </button>
@@ -186,10 +210,13 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         {props.sessions.length === 0 ? (
           <div className="empty-session-list">暂无匹配会话</div>
         ) : (
-          props.sessions.map(session => (
+          props.sessions.map(session => {
+            const identity = sessionSummaryIdentity(session);
+            const handedOff = props.handedOffSessionKeys.includes(identity);
+            return (
             <div
-              className={`session-row${props.activePath === session.path ? " session-row--active" : ""}`}
-              key={session.path}
+              className={`session-row${props.activeSessionKey === identity ? " session-row--active" : ""}`}
+              key={identity}
             >
               <button className="session-row__main" disabled={props.switching} onClick={() => props.onOpen(session)}>
                 <span className="session-row__icon">{session.runtimeState === "running" ? <span className="pulse-dot" /> : "›"}</span>
@@ -197,30 +224,37 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
                   <strong>{session.title}</strong>
                   <small>
                     {session.projectName} · {relativeTime(session.modifiedAt)}
-                    {props.handedOffPaths.includes(session.path) ? " · 原始终端中" : ""}
+                    {handedOff ? " · 原始终端中" : ""}
                   </small>
+                  <span className="session-runtime-badges">
+                    <span className="session-runtime-badge">{sessionBackendLabel(session.runtimeKind)}</span>
+                    <span className="session-runtime-badge session-runtime-badge--profile">
+                      {session.profile ? `Profile · ${session.profile}` : "Default"}
+                    </span>
+                  </span>
                   {session.tags.length > 0 && (
                     <span className="tag-line">{session.tags.slice(0, 3).map(tag => <em key={tag}>{tag}</em>)}</span>
                   )}
                 </span>
               </button>
               <button
-                className={`session-menu-trigger${menu?.session.path === session.path ? " is-active" : ""}`}
+                className={`session-menu-trigger${menu && sessionSummaryIdentity(menu.session) === identity ? " is-active" : ""}`}
                 data-session-menu-trigger
                 aria-haspopup="menu"
-                aria-expanded={menu?.session.path === session.path}
+                aria-expanded={Boolean(menu && sessionSummaryIdentity(menu.session) === identity)}
                 disabled={props.switching}
                 title="会话操作"
                 onClick={event => {
                   event.stopPropagation();
-                  if (menu?.session.path === session.path) setMenu(undefined);
+                  if (menu && sessionSummaryIdentity(menu.session) === identity) setMenu(undefined);
                   else openMenu(session, event.currentTarget);
                 }}
               >
                 <MoreHorizontal size={15} />
               </button>
             </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -233,12 +267,15 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         >
           <button role="menuitem" disabled={props.switching} onClick={() => runMenuAction(props.onOpen)}>
             <MessageSquare size={14} />
-            <span>{props.handedOffPaths.includes(menu.session.path) ? "重新接管会话…" : "继续会话"}</span>
+            <span>{props.handedOffSessionKeys.includes(sessionSummaryIdentity(menu.session)) ? "重新接管会话…" : "继续会话"}</span>
           </button>
           <button role="menuitem" disabled={props.switching} onClick={() => runMenuAction(session => props.onOpenTerminal(session))}>
             <TerminalSquare size={14} /><span>在原始终端打开</span>
           </button>
           <div className="session-menu__separator" />
+          <button role="menuitem" onClick={() => runMenuAction(props.onRename)}>
+            <PencilLine size={14} /><span>重命名…</span>
+          </button>
           <button role="menuitem" onClick={() => runMenuAction(props.onPin)}>
             {menu.session.pinned ? <PinOff size={14} /> : <Pin size={14} />}
             <span>{menu.session.pinned ? "取消置顶" : "置顶"}</span>
