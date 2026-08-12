@@ -8,7 +8,9 @@ const fakeClients = vi.hoisted(() => ({
       runtimeId: string;
       state: "starting";
       cwd: string;
-      distro: string;
+      installationId: string;
+      runtimeKind: "linux-direct" | "windows-native" | "wsl";
+      distro?: string;
     };
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
@@ -38,10 +40,21 @@ vi.mock("../src/main/omp-rpc-client", () => ({
       }
     });
 
-    constructor(runtimeId: string, _installation: unknown, input: { path: string; distro: string }) {
+    constructor(
+      runtimeId: string,
+      installation: { id: string; kind: "linux-direct" | "windows-native" | "wsl"; distro?: string },
+      input: { path: string; installationId: string },
+    ) {
       super();
       this.runtimeId = runtimeId;
-      this.descriptor = { runtimeId, state: "starting" as const, cwd: input.path, distro: input.distro };
+      this.descriptor = {
+        runtimeId,
+        state: "starting" as const,
+        cwd: input.path,
+        installationId: installation.id,
+        runtimeKind: installation.kind,
+        distro: installation.distro,
+      };
       fakeClients.instances.push(this);
     }
 
@@ -52,11 +65,12 @@ vi.mock("../src/main/omp-rpc-client", () => ({
 import { RuntimeManager } from "../src/main/runtime-manager";
 
 const installation = {
-  distro: "direct",
+  id: "linux-direct:/usr/bin/omp",
+  kind: "linux-direct" as const,
+  label: "Local Linux OMP",
   executablePath: "/usr/bin/omp",
   version: "17.2.12",
   agentDir: "/tmp/.omp/agent",
-  direct: true,
 };
 
 describe("RuntimeManager lifecycle", () => {
@@ -70,13 +84,11 @@ describe("RuntimeManager lifecycle", () => {
   it("stops the previous runtime before starting its replacement", async () => {
     const manager = new RuntimeManager();
     const first = await manager.start(installation, {
-      distro: "direct",
-      installationPath: installation.executablePath,
+      installationId: installation.id,
       path: "/tmp/first",
     });
     const second = await manager.start(installation, {
-      distro: "direct",
-      installationPath: installation.executablePath,
+      installationId: installation.id,
       path: "/tmp/second",
     });
 
@@ -92,8 +104,7 @@ describe("RuntimeManager lifecycle", () => {
     const manager = new RuntimeManager();
     const starts = ["one", "two", "three"].map(name =>
       manager.start(installation, {
-        distro: "direct",
-        installationPath: installation.executablePath,
+        installationId: installation.id,
         path: `/tmp/${name}`,
       }),
     );
@@ -117,8 +128,7 @@ describe("RuntimeManager lifecycle", () => {
 
     await expect(
       manager.start(installation, {
-        distro: "direct",
-        installationPath: installation.executablePath,
+        installationId: installation.id,
         path: "/tmp/failing",
       }),
     ).rejects.toThrow("startup failed");
@@ -131,19 +141,50 @@ describe("RuntimeManager lifecycle", () => {
   it("blocks replacement and retains ownership when the previous runtime cannot stop", async () => {
     const manager = new RuntimeManager();
     const first = await manager.start(installation, {
-      distro: "direct",
-      installationPath: installation.executablePath,
+      installationId: installation.id,
       path: "/tmp/first",
     });
     fakeClients.failNextStop = true;
 
     await expect(manager.start(installation, {
-      distro: "direct",
-      installationPath: installation.executablePath,
+      installationId: installation.id,
       path: "/tmp/second",
     })).rejects.toThrow("could not be stopped safely");
 
     expect(fakeClients.instances).toHaveLength(1);
+    expect(manager.list()).toEqual([expect.objectContaining({ runtimeId: first.runtimeId })]);
+  });
+
+  it("rejects a mismatched installation before disrupting the owned runtime", async () => {
+    const manager = new RuntimeManager();
+    const first = await manager.start(installation, {
+      installationId: installation.id,
+      path: "/tmp/first",
+    });
+
+    await expect(manager.start(installation, {
+      installationId: "windows-native:C:\\Tools\\omp.exe",
+      path: "/tmp/second",
+    })).rejects.toThrow("does not match");
+
+    expect(fakeClients.events).toEqual([`start:${first.runtimeId}`]);
+    expect(fakeClients.instances).toHaveLength(1);
+    expect(manager.list()).toEqual([expect.objectContaining({ runtimeId: first.runtimeId })]);
+  });
+
+  it("adapter-validates a replacement path before disrupting the owned runtime", async () => {
+    const manager = new RuntimeManager();
+    const first = await manager.start(installation, {
+      installationId: installation.id,
+      path: "/tmp/first",
+    });
+
+    await expect(manager.start(installation, {
+      installationId: installation.id,
+      path: "C:\\wrong-backend\\project",
+    })).rejects.toThrow("Invalid WSL workspace path");
+
+    expect(fakeClients.events).toEqual([`start:${first.runtimeId}`]);
     expect(manager.list()).toEqual([expect.objectContaining({ runtimeId: first.runtimeId })]);
   });
 });

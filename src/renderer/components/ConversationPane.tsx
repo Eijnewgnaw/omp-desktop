@@ -177,7 +177,7 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
           <span className="conversation-title__icon"><GitBranch size={16} /></span>
           <div>
             <strong>{props.session?.title || (props.workspace ? "新会话" : "OMP Desktop")}</strong>
-            <small>{props.session?.cwd || props.workspace || "选择一个 WSL 工作区开始"}</small>
+            <small>{props.session?.cwd || props.workspace || "选择运行环境和工作区后开始"}</small>
           </div>
         </div>
         <div className="conversation-actions no-drag">
@@ -243,7 +243,7 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
             <p>
               {props.workspace
                 ? `当前工作区是 ${props.workspace}。发送消息后，任务仍由你现有的 OMP 完整执行。`
-                : "先为这个新会话选择 WSL 项目目录，然后再启动 OMP。"}
+                : "先为这个新会话选择 OMP 运行环境和项目目录，然后再启动 OMP。"}
             </p>
             {!props.workspace && props.workspaceSelectable && (
               <button className="primary-button welcome-action" onClick={props.onChooseWorkspace}>

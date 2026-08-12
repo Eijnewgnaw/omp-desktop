@@ -100,7 +100,7 @@ try {
       && textarea.placeholder === "请先选择工作区";
   });
   if (!(await sendButton.isDisabled())) throw new Error("A new session could send before selecting its workspace");
-  if ((await page.locator(".conversation-title small").textContent()) !== "选择一个 WSL 工作区开始") {
+  if ((await page.locator(".conversation-title small").textContent()) !== "选择运行环境和工作区后开始") {
     throw new Error("The initial new session inherited a previous workspace");
   }
 
@@ -163,6 +163,30 @@ try {
   }
   await page.getByText("当前会话已请求重新载入", { exact: true }).waitFor({ timeout: 15_000 });
 
+  const originalSessionContents = await fs.readFile(sessionPath, "utf8");
+  const renamedSessionTitle = "E2E renamed session";
+  await sessionRow.locator("[data-session-menu-trigger]").click();
+  await page.getByRole("menuitem", { name: "重命名…" }).click();
+  const renameDialog = page.getByRole("dialog", { name: "重命名会话" });
+  await renameDialog.waitFor();
+  const renameInput = renameDialog.getByRole("textbox", { name: "新名称" });
+  if (await renameInput.inputValue() !== "Resumable fixture session") {
+    throw new Error("Rename dialog was not prefilled with the selected session title");
+  }
+  await renameInput.fill(`  ${renamedSessionTitle}  `);
+  await renameDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await renameDialog.waitFor({ state: "detached" });
+  sessionRow = page.locator(".session-row").filter({ hasText: renamedSessionTitle }).first();
+  await sessionRow.waitFor({ timeout: 15_000 });
+  await page.locator(".conversation-title strong").getByText(renamedSessionTitle, { exact: true }).waitFor();
+  if (await fs.readFile(sessionPath, "utf8") !== originalSessionContents) {
+    throw new Error("Renaming a session modified the OMP JSONL source of truth");
+  }
+  await refreshButton.click();
+  await page.getByText("当前会话已请求重新载入", { exact: true }).waitFor({ timeout: 15_000 });
+  await sessionRow.getByText(renamedSessionTitle, { exact: true }).waitFor();
+  await page.locator(".conversation-title strong").getByText(renamedSessionTitle, { exact: true }).waitFor();
+
   await composer.fill("Continue from desktop");
   await composer.press("Enter");
   await page.getByText("Resumed reply: Continue from desktop", { exact: true }).waitFor({ timeout: 15_000 });
@@ -215,7 +239,41 @@ try {
   if (await page.locator(".new-session-button").isDisabled()) {
     throw new Error("New Session was disabled while OMP was running");
   }
-  sessionRow = page.locator(".session-row").filter({ hasText: "Resumable fixture session" }).first();
+  const [runtimeBeforeNewDialog] = await page.evaluate(() => window.ompDesktop.runtime.list());
+  if (!runtimeBeforeNewDialog) throw new Error("Running OMP disappeared before opening the New Session dialog");
+  const activeTitleBeforeNewDialog = await page.locator(".conversation-title strong").textContent();
+  await page.locator(".new-session-button").click();
+  const newSessionDialog = page.getByRole("dialog", { name: "新建会话" });
+  await newSessionDialog.waitFor();
+  const runtimesWhileNewDialogOpen = await page.evaluate(() => window.ompDesktop.runtime.list());
+  if (runtimesWhileNewDialogOpen.length !== 1
+    || runtimesWhileNewDialogOpen[0]?.runtimeId !== runtimeBeforeNewDialog.runtimeId) {
+    throw new Error("Opening New Session stopped or replaced the current OMP runtime before confirmation");
+  }
+  if (await page.locator(".conversation-title strong").textContent() !== activeTitleBeforeNewDialog) {
+    throw new Error("Opening New Session switched the active conversation before confirmation");
+  }
+  await newSessionDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await newSessionDialog.waitFor({ state: "detached" });
+  const runtimesAfterNewDialogCancel = await page.evaluate(() => window.ompDesktop.runtime.list());
+  if (runtimesAfterNewDialogCancel.length !== 1
+    || runtimesAfterNewDialogCancel[0]?.runtimeId !== runtimeBeforeNewDialog.runtimeId) {
+    throw new Error("Canceling New Session stopped or replaced the current OMP runtime");
+  }
+  if (await page.locator(".conversation-title strong").textContent() !== activeTitleBeforeNewDialog) {
+    throw new Error("Canceling New Session changed the active conversation");
+  }
+
+  await page.keyboard.press("Control+N");
+  await newSessionDialog.waitFor();
+  const runtimesWhileShortcutDialogOpen = await page.evaluate(() => window.ompDesktop.runtime.list());
+  if (runtimesWhileShortcutDialogOpen.length !== 1
+    || runtimesWhileShortcutDialogOpen[0]?.runtimeId !== runtimeBeforeNewDialog.runtimeId) {
+    throw new Error("Ctrl+N did not use the same non-destructive New Session path");
+  }
+  await newSessionDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await newSessionDialog.waitFor({ state: "detached" });
+  sessionRow = page.locator(".session-row").filter({ hasText: renamedSessionTitle }).first();
   if (await sessionRow.locator(".session-row__main").isDisabled()) {
     throw new Error("The active sidebar session was disabled while OMP was running");
   }
@@ -229,6 +287,36 @@ try {
   }
   await page.keyboard.press("Escape");
   await page.getByText("Continuation stage two", { exact: true }).waitFor({ timeout: 15_000 });
+
+  await app.evaluate(({ dialog }, filePaths) => {
+    dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths });
+  }, [newWorkspaceDirectory]);
+  const [runtimeBeforeConfirmedNewSession] = await page.evaluate(() => window.ompDesktop.runtime.list());
+  if (!runtimeBeforeConfirmedNewSession) throw new Error("Active runtime disappeared before confirming New Session");
+  await page.locator(".new-session-button").click();
+  await newSessionDialog.waitFor();
+  await newSessionDialog.getByRole("button", { name: "选择项目文件夹" }).click();
+  await newSessionDialog.getByText(newWorkspaceDirectory, { exact: true }).waitFor();
+  const [runtimeBeforeNewSessionConfirmation] = await page.evaluate(() => window.ompDesktop.runtime.list());
+  if (runtimeBeforeNewSessionConfirmation?.runtimeId !== runtimeBeforeConfirmedNewSession.runtimeId) {
+    throw new Error("Selecting a project stopped the active runtime before New Session confirmation");
+  }
+  await newSessionDialog.getByRole("button", { name: "创建会话" }).click();
+  await newSessionDialog.waitFor({ state: "detached" });
+  if ((await page.evaluate(() => window.ompDesktop.runtime.list())).length !== 0) {
+    throw new Error("Confirming New Session did not stop the previously active runtime");
+  }
+  await page.waitForFunction(expected => {
+    const title = document.querySelector(".conversation-title strong");
+    const cwd = document.querySelector(".conversation-title small");
+    return title?.textContent === "新会话" && cwd?.textContent === expected;
+  }, newWorkspaceDirectory);
+  await sessionRow.locator(".session-row__main").click();
+  await page.waitForFunction(async expectedTitle => {
+    const [activeRuntime] = await window.ompDesktop.runtime.list();
+    const title = document.querySelector(".conversation-title strong");
+    return Boolean(activeRuntime) && title?.textContent === expectedTitle;
+  }, renamedSessionTitle);
 
   await composer.fill("FAKE_LOCAL");
   await composer.press("Enter");
@@ -285,14 +373,14 @@ try {
     const cwd = document.querySelector(".conversation-title small");
     const textarea = document.querySelector(".composer textarea");
     return title?.textContent === "OMP Desktop"
-      && cwd?.textContent === "选择一个 WSL 工作区开始"
+      && cwd?.textContent === "选择运行环境和工作区后开始"
       && textarea instanceof HTMLTextAreaElement
       && textarea.disabled
       && textarea.placeholder === "请先选择工作区";
   });
   if (!(await sendButton.isDisabled())) throw new Error("Terminal handoff left the new-session composer sendable");
 
-  sessionRow = page.locator(".session-row").filter({ hasText: "Resumable fixture session" }).first();
+  sessionRow = page.locator(".session-row").filter({ hasText: renamedSessionTitle }).first();
   await sessionRow.getByText("原始终端中", { exact: false }).waitFor({ timeout: 15_000 });
   await sessionRow.locator(".session-row__main").click();
   const reclaimDialog = page.getByRole("dialog", { name: "重新接管这个会话？" });
@@ -308,8 +396,16 @@ try {
   }, [newWorkspaceDirectory]);
   const startCountBeforeWorkspaceSelection = (await readLogEntries()).filter(entry => entry.event === "start").length;
   const workspacePicker = page.locator(".workspace-picker");
-  if (await workspacePicker.isDisabled()) throw new Error("Fresh session workspace picker was disabled");
+  if (await workspacePicker.isDisabled()) throw new Error("Fresh session setup entry was disabled");
   await workspacePicker.click();
+  await newSessionDialog.waitFor();
+  await newSessionDialog.getByRole("button", { name: "选择项目文件夹" }).click();
+  await newSessionDialog.getByText(newWorkspaceDirectory, { exact: true }).waitFor();
+  if ((await readLogEntries()).filter(entry => entry.event === "start").length !== startCountBeforeWorkspaceSelection) {
+    throw new Error("Choosing a project in the New Session dialog started OMP before confirmation");
+  }
+  await newSessionDialog.getByRole("button", { name: "创建会话" }).click();
+  await newSessionDialog.waitFor({ state: "detached" });
   await page.waitForFunction(expected => {
     const title = document.querySelector(".conversation-title strong");
     const cwd = document.querySelector(".conversation-title small");
@@ -320,7 +416,7 @@ try {
       && !textarea.disabled;
   }, newWorkspaceDirectory);
   if ((await readLogEntries()).filter(entry => entry.event === "start").length !== startCountBeforeWorkspaceSelection) {
-    throw new Error("Selecting a workspace started OMP before the first prompt");
+    throw new Error("Creating a configured session started OMP before the first prompt");
   }
 
   await composer.fill("Create session in selected workspace");
@@ -355,13 +451,32 @@ try {
   const deleteDialog = page.getByRole("dialog", { name: "彻底删除这个会话？" });
   await deleteDialog.waitFor();
   const permanentDeleteButton = deleteDialog.getByRole("button", { name: "彻底删除", exact: true });
-  if (!(await permanentDeleteButton.isDisabled())) {
-    throw new Error("Permanent delete was enabled before typing its confirmation phrase");
+  const deleteSessionPath = deleteDialog.getByText(`会话文件：${freshSessionPath}`, { exact: true });
+  if (!(await deleteSessionPath.isVisible()) || await deleteSessionPath.getAttribute("title") !== freshSessionPath) {
+    throw new Error("Permanent delete dialog did not identify the exact session file");
   }
-  await deleteDialog.locator("input").fill("永久删除");
   if (await permanentDeleteButton.isDisabled()) {
-    throw new Error("Permanent delete stayed disabled after typing its confirmation phrase");
+    throw new Error("Permanent delete remained disabled in the confirmation dialog");
   }
+  const cancelDeleteButton = deleteDialog.getByRole("button", { name: "取消", exact: true });
+  if (!(await cancelDeleteButton.evaluate(element => element === document.activeElement))) {
+    throw new Error("Permanent delete dialog did not focus its safe cancel action");
+  }
+  for (let index = 0; index < 6; index += 1) {
+    await page.keyboard.press(index % 2 === 0 ? "Tab" : "Shift+Tab");
+    if (!(await deleteDialog.evaluate(dialog => dialog.contains(document.activeElement)))) {
+      throw new Error("Permanent delete dialog allowed keyboard focus to escape to the background");
+    }
+  }
+  await cancelDeleteButton.focus();
+  await cancelDeleteButton.press("Enter");
+  await deleteDialog.waitFor({ state: "detached" });
+  await fs.access(freshSessionPath);
+
+  freshRow = page.locator(".session-row").filter({ hasText: "Fresh fixture session" }).first();
+  await freshRow.locator("[data-session-menu-trigger]").click();
+  await page.getByRole("menuitem", { name: "彻底删除…" }).click();
+  await deleteDialog.waitFor();
   await permanentDeleteButton.click();
   await page.getByText("会话及其附件已彻底删除", { exact: true }).waitFor({ timeout: 15_000 });
   await freshRow.waitFor({ state: "detached", timeout: 15_000 });
@@ -370,10 +485,30 @@ try {
   await page.waitForFunction(() => {
     const cwd = document.querySelector(".conversation-title small");
     const textarea = document.querySelector(".composer textarea");
-    return cwd?.textContent === "选择一个 WSL 工作区开始"
+    return cwd?.textContent === "选择运行环境和工作区后开始"
       && textarea instanceof HTMLTextAreaElement
       && textarea.disabled;
   });
+  const horizontalLayout = await page.evaluate(() => {
+    const pane = document.querySelector(".conversation-pane");
+    const welcome = document.querySelector(".welcome-panel")?.getBoundingClientRect();
+    const paneBounds = pane?.getBoundingClientRect();
+    return {
+      paneLeft: paneBounds?.left,
+      paneRight: paneBounds?.right,
+      paneScrollLeft: pane?.scrollLeft,
+      paneScrollWidth: pane?.scrollWidth,
+      paneClientWidth: pane?.clientWidth,
+      welcomeLeft: welcome?.left,
+      welcomeRight: welcome?.right,
+    };
+  });
+  if ((horizontalLayout.paneScrollLeft ?? -1) !== 0
+    || (horizontalLayout.paneScrollWidth ?? 0) > (horizontalLayout.paneClientWidth ?? 0) + 1
+    || (horizontalLayout.welcomeLeft ?? -1) < (horizontalLayout.paneLeft ?? 0)
+    || (horizontalLayout.welcomeRight ?? Number.POSITIVE_INFINITY) > (horizontalLayout.paneRight ?? 0)) {
+    throw new Error(`Welcome layout escaped or horizontally scrolled after handoff: ${JSON.stringify(horizontalLayout)}`);
+  }
 
   const logEntries = await readLogEntries();
   const starts = logEntries.filter(entry => entry.event === "start");
@@ -390,7 +525,11 @@ try {
     resumed: true,
     boundedLongHistoryScroll: true,
     refreshReloadsRuntime: true,
+    sessionRenamePersists: true,
     runningControlsAvailable: true,
+    newSessionModalNonDestructive: true,
+    newSessionShortcut: true,
+    newSessionConfirmationStopsRuntime: true,
     modelSelection: true,
     promptErrorRestored: true,
     newerDraftPreserved: true,
@@ -404,6 +543,7 @@ try {
     perSessionWorkspace: true,
     trashAndPermanentDeleteVisible: true,
     permanentDeleteConfirmed: true,
+    boundedHorizontalWelcome: true,
     screenshot,
   })}\n`);
 } finally {

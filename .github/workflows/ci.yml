@@ -23,3 +23,17 @@ jobs:
       - run: npm run build
       - run: sudo npx playwright install-deps chromium
       - run: xvfb-run --auto-servernum npm run test:e2e:resume
+      - run: xvfb-run --auto-servernum npm run test:e2e:profile
+
+  windows-validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

@@ -8,11 +8,16 @@ import type {
   StartRuntimeInput,
 } from "../shared/contracts";
 import { OmpRpcClient } from "./omp-rpc-client";
-import { assertRuntimeId } from "./security";
+import { assertLogicalPath, assertRuntimeId } from "./security";
 
 interface RuntimeManagerEvents {
   frame: [RuntimeFrameEnvelope];
   status: [RuntimeStatusEnvelope];
+}
+
+export interface OwnedRuntime {
+  descriptor: RuntimeDescriptor;
+  installation: OmpInstallation;
 }
 
 export class RuntimeManager extends EventEmitter<RuntimeManagerEvents> {
@@ -20,6 +25,12 @@ export class RuntimeManager extends EventEmitter<RuntimeManagerEvents> {
   #transition: Promise<void> = Promise.resolve();
 
   async start(installation: OmpInstallation, input: StartRuntimeInput): Promise<RuntimeDescriptor> {
+    if (input.installationId !== installation.id) {
+      throw new Error("Runtime installation does not match the selected OMP installation");
+    }
+    assertLogicalPath(installation, installation.executablePath, "OMP executable");
+    assertLogicalPath(installation, input.path, "workspace path");
+    if (input.sessionPath) assertLogicalPath(installation, input.sessionPath, "session path");
     return this.#exclusive(async () => {
       await this.#stopAllUnlocked();
       const runtimeId = crypto.randomUUID();
@@ -64,6 +75,13 @@ export class RuntimeManager extends EventEmitter<RuntimeManagerEvents> {
 
   list(): RuntimeDescriptor[] {
     return [...this.#runtimes.values()].map(client => ({ ...client.descriptor }));
+  }
+
+  listOwned(): OwnedRuntime[] {
+    return [...this.#runtimes.values()].map(client => ({
+      descriptor: { ...client.descriptor },
+      installation: client.installation,
+    }));
   }
 
   async stopAll(): Promise<void> {

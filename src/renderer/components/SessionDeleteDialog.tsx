@@ -1,5 +1,5 @@
 import { ShieldAlert, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { SessionSummary } from "../../shared/contracts";
 
 interface SessionDeleteDialogProps {
@@ -9,19 +9,46 @@ interface SessionDeleteDialogProps {
   onConfirm(): void;
 }
 
-const CONFIRMATION = "永久删除";
-
 export function SessionDeleteDialog(props: SessionDeleteDialogProps): React.JSX.Element {
-  const [confirmation, setConfirmation] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    cancelButtonRef.current?.focus();
   }, []);
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="trash-dialog delete-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+      <section
+        ref={dialogRef}
+        className="trash-dialog delete-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-warning"
+        onKeyDown={event => {
+          if (event.key === "Escape" && !props.deleting) {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onCancel();
+            return;
+          }
+          if (event.key !== "Tab") return;
+          const focusable = Array.from(
+            dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+          );
+          const first = focusable[0];
+          const last = focusable.at(-1);
+          if (!first || !last) return;
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
+      >
         <header>
           <span><ShieldAlert size={18} /></span>
           <div>
@@ -34,27 +61,24 @@ export function SessionDeleteDialog(props: SessionDeleteDialogProps): React.JSX.
         </header>
         <div className="trash-dialog__body">
           <strong>{props.session.title}</strong>
-          <span>{props.session.cwd}</span>
-          <p>这会永久删除 OMP JSONL 会话文件及其附件目录，无法从回收站恢复。</p>
-          <label className="delete-confirmation">
-            <span>请输入“{CONFIRMATION}”确认</span>
-            <input
-              ref={inputRef}
-              value={confirmation}
-              disabled={props.deleting}
-              autoComplete="off"
-              onChange={event => setConfirmation(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === "Enter" && confirmation === CONFIRMATION && !props.deleting) props.onConfirm();
-              }}
-            />
-          </label>
+          <span title={props.session.cwd}>工作区：{props.session.cwd}</span>
+          <span title={props.session.path}>会话文件：{props.session.path}</span>
+          <p id="delete-dialog-warning">
+            此操作会永久删除 OMP JSONL 会话文件及其附件目录，无法撤销，也无法从回收站恢复。
+          </p>
         </div>
         <footer>
-          <button className="secondary-button" disabled={props.deleting} onClick={props.onCancel}>取消</button>
+          <button
+            ref={cancelButtonRef}
+            className="secondary-button"
+            disabled={props.deleting}
+            onClick={props.onCancel}
+          >
+            取消
+          </button>
           <button
             className="danger-button danger-button--permanent"
-            disabled={props.deleting || confirmation !== CONFIRMATION}
+            disabled={props.deleting}
             onClick={props.onConfirm}
           >
             {props.deleting ? "正在彻底删除…" : "彻底删除"}

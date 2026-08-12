@@ -1,13 +1,21 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import type { OmpInstallation, RpcFrame, RuntimeDescriptor, RuntimeState, StartRuntimeInput } from "../shared/contracts";
-import { assertDistro, assertWslPath } from "./security";
+import {
+  assertDistro,
+  assertLogicalPath,
+  installationDataDir,
+  joinLogicalPath,
+  ompArgumentsForInstallation,
+} from "./security";
 import { RpcFrameDecoder } from "./rpc-frame-decoder";
 
 const STARTUP_TIMEOUT_MS = 15_000;
 const GRACEFUL_STOP_TIMEOUT_MS = 2_000;
 const SIGNAL_STOP_TIMEOUT_MS = 1_500;
 const WSL_HELPER_TIMEOUT_MS = 5_000;
+const NATIVE_HELPER_TIMEOUT_MS = 5_000;
 const WSL_PROCESS_GROUP_MARKER = "OMP_DESKTOP_PROCESS_GROUP";
 
 // Every value controlled by the caller is passed after the shell program as a
@@ -53,6 +61,61 @@ interface OmpRpcClientEvents {
   exit: [number | null, NodeJS.Signals | null];
 }
 
+interface ValidatedRuntimeFrame {
+  frame: RpcFrame;
+  sessionFile?: string;
+}
+
+function assertRuntimeSessionFile(installation: OmpInstallation, rawSessionFile: unknown): string | undefined {
+  if (rawSessionFile === undefined || rawSessionFile === null) return undefined;
+  if (typeof rawSessionFile !== "string") {
+    throw new Error("OMP runtime reported a non-string session path");
+  }
+
+  const sessionFile = assertLogicalPath(installation, rawSessionFile, "OMP runtime session path");
+  const sessionsRoot = joinLogicalPath(installation, installationDataDir(installation), "sessions");
+  const pathApi = installation.kind === "windows-native" ? path.win32 : path.posix;
+  const comparableRoot = installation.kind === "windows-native" ? sessionsRoot.toLowerCase() : sessionsRoot;
+  const comparableSession = installation.kind === "windows-native" ? sessionFile.toLowerCase() : sessionFile;
+  const relative = pathApi.relative(comparableRoot, comparableSession);
+  if (
+    !relative
+    || relative === ".."
+    || relative.startsWith(`..${pathApi.sep}`)
+    || pathApi.isAbsolute(relative)
+  ) {
+    throw new Error("OMP runtime reported a session path outside its trusted data directory");
+  }
+  return sessionFile;
+}
+
+function validateRuntimeFrame(installation: OmpInstallation, frame: RpcFrame): ValidatedRuntimeFrame {
+  if (frame.type === "session_info_update") {
+    const sessionFile = assertRuntimeSessionFile(installation, frame.sessionFile);
+    return {
+      frame: sessionFile !== undefined && sessionFile !== frame.sessionFile
+        ? { ...frame, sessionFile }
+        : frame,
+      sessionFile,
+    };
+  }
+
+  if (frame.type === "response" && frame.command === "get_state") {
+    const data = frame.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return { frame };
+    const rawSessionFile = (data as Record<string, unknown>).sessionFile;
+    const sessionFile = assertRuntimeSessionFile(installation, rawSessionFile);
+    return {
+      frame: sessionFile !== undefined && sessionFile !== rawSessionFile
+        ? { ...frame, data: { ...data, sessionFile } }
+        : frame,
+      sessionFile,
+    };
+  }
+
+  return { frame };
+}
+
 export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
   readonly descriptor: RuntimeDescriptor;
   readonly #installation: OmpInstallation;
@@ -71,17 +134,28 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
   #rejectProcessGroup?: (error: Error) => void;
   #processGroupSettled = false;
   #shutdownVerificationError?: Error;
+  #protocolFailed = false;
 
   constructor(runtimeId: string, installation: OmpInstallation, input: StartRuntimeInput) {
     super();
     this.#installation = installation;
     this.#input = input;
+    if (input.installationId !== installation.id) {
+      throw new Error("Runtime installation does not match the selected OMP installation");
+    }
+    const cwd = assertLogicalPath(installation, input.path, "workspace path");
+    const sessionPath = input.sessionPath
+      ? assertLogicalPath(installation, input.sessionPath, "session path")
+      : undefined;
     this.descriptor = {
       runtimeId,
       state: "starting",
-      sessionPath: input.sessionPath,
-      cwd: input.path,
-      distro: input.distro,
+      sessionPath,
+      cwd,
+      installationId: installation.id,
+      runtimeKind: installation.kind,
+      profile: installation.profile,
+      distro: installation.distro,
     };
   }
 
@@ -89,20 +163,34 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
     return this.#shutdownVerificationError !== undefined;
   }
 
-  async start(): Promise<RuntimeDescriptor> {
-    const cwd = assertWslPath(this.#input.path, "workspace path");
-    const ompArgs = ["--mode", "rpc-ui", "--cwd", cwd];
-    if (this.#input.profile) ompArgs.push("--profile", this.#input.profile);
-    if (this.#input.sessionPath) ompArgs.push("--resume", assertWslPath(this.#input.sessionPath, "session path"));
+  get installation(): OmpInstallation {
+    return { ...this.#installation };
+  }
 
-    if (this.#installation.direct) {
-      this.#process = spawn(this.#installation.executablePath, ompArgs, {
+  async start(): Promise<RuntimeDescriptor> {
+    const cwd = this.descriptor.cwd;
+    const executablePath = assertLogicalPath(this.#installation, this.#installation.executablePath, "OMP executable");
+    const launchArgs = ["--mode", "rpc-ui", "--cwd", cwd];
+    if (this.descriptor.sessionPath) {
+      launchArgs.push("--resume", this.descriptor.sessionPath);
+    }
+    const ompArgs = ompArgumentsForInstallation(this.#installation, launchArgs);
+
+    if (this.#installation.kind === "windows-native") {
+      this.#process = spawn(executablePath, ompArgs, {
+        cwd,
+        env: { ...process.env, COLORTERM: "truecolor" },
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } else if (this.#installation.kind === "linux-direct") {
+      this.#process = spawn(executablePath, ompArgs, {
         cwd,
         env: { ...process.env, COLORTERM: "truecolor" },
         stdio: ["pipe", "pipe", "pipe"],
       });
     } else {
-      const distro = assertDistro(this.#input.distro);
+      const distro = assertDistro(this.#installation.distro ?? "");
       this.#wslPidFile = `/tmp/omp-desktop-${this.descriptor.runtimeId}.pid`;
       this.#processGroupReady = new Promise<number>((resolve, reject) => {
         this.#resolveProcessGroup = resolve;
@@ -121,7 +209,7 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
           WSL_LAUNCH_SCRIPT,
           "omp-desktop-supervisor",
           this.#wslPidFile,
-          assertWslPath(this.#installation.executablePath),
+          executablePath,
           ...ompArgs,
         ],
         { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
@@ -220,12 +308,32 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
       return;
     }
 
-    if (this.#installation.direct) {
+    if (this.#installation.kind === "linux-direct") {
       child.kill("SIGTERM");
       if (!(await this.#waitForExit(SIGNAL_STOP_TIMEOUT_MS))) {
         child.kill("SIGKILL");
         if (!(await this.#waitForExit(SIGNAL_STOP_TIMEOUT_MS))) {
           const error = new Error("OMP process did not exit after SIGTERM and SIGKILL");
+          this.#shutdownVerificationError = error;
+          this.descriptor.error = error.message;
+          this.#emitStatus("failed");
+          throw error;
+        }
+      }
+    } else if (this.#installation.kind === "windows-native") {
+      const helperErrors: Error[] = [];
+      await this.#taskkillNativeProcessTree(false).catch(error => {
+        helperErrors.push(error instanceof Error ? error : new Error(String(error)));
+      });
+      if (!(await this.#waitForExit(SIGNAL_STOP_TIMEOUT_MS))) {
+        await this.#taskkillNativeProcessTree(true).catch(error => {
+          helperErrors.push(error instanceof Error ? error : new Error(String(error)));
+        });
+        if (!(await this.#waitForExit(SIGNAL_STOP_TIMEOUT_MS))) {
+          const detail = helperErrors.map(error => error.message).filter(Boolean).join("; ");
+          const error = new Error(
+            `Could not verify that the native OMP process tree exited${detail ? `: ${detail}` : " after taskkill /T and /T /F"}`,
+          );
           this.#shutdownVerificationError = error;
           this.descriptor.error = error.message;
           this.#emitStatus("failed");
@@ -348,6 +456,42 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
     ]);
   }
 
+  async #taskkillNativeProcessTree(force: boolean): Promise<void> {
+    const pid = this.descriptor.pid;
+    if (!Number.isSafeInteger(pid) || (pid ?? 0) <= 1) {
+      throw new Error("Native OMP process did not report a valid root PID");
+    }
+    const args = ["/PID", String(pid), "/T"];
+    if (force) args.push("/F");
+    await new Promise<void>((resolve, reject) => {
+      const helper = spawn("taskkill.exe", args, {
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timeout = setTimeout(() => {
+        helper.kill("SIGTERM");
+        finish(new Error(`taskkill ${force ? "/T /F" : "/T"} helper timed out`));
+      }, NATIVE_HELPER_TIMEOUT_MS);
+      helper.stderr.on("data", chunk => {
+        stderr = `${stderr}${String(chunk)}`.slice(-4096);
+      });
+      helper.once("error", error => finish(error));
+      helper.once("exit", code => {
+        if (code === 0) finish();
+        else finish(new Error(stderr.trim() || `taskkill exited with code ${String(code)}`));
+      });
+    });
+  }
+
   async #cleanupWslPidFile(): Promise<void> {
     if (this.#wslCleanupPromise) return this.#wslCleanupPromise;
     const pidFile = this.#wslPidFile;
@@ -364,8 +508,8 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
   }
 
   async #runWslHelper(command: string[]): Promise<void> {
-    if (this.#installation.direct) return;
-    const distro = assertDistro(this.#input.distro);
+    if (this.#installation.kind !== "wsl") return;
+    const distro = assertDistro(this.#installation.distro ?? "");
     await new Promise<void>((resolve, reject) => {
       const helper = spawn("wsl.exe", ["-d", distro, "--exec", ...command], {
         windowsHide: true,
@@ -396,9 +540,11 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
   }
 
   #handleStdout(chunk: Buffer): void {
+    if (this.#protocolFailed) return;
     try {
       for (const frame of this.#decoder.push(chunk)) this.#handleFrame(frame);
     } catch (error) {
+      this.#protocolFailed = true;
       this.descriptor.error = error instanceof Error ? error.message : String(error);
       this.#emitStatus("failed");
       void this.stop().catch(stopError => {
@@ -409,7 +555,9 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
     }
   }
 
-  #handleFrame(frame: RpcFrame): void {
+  #handleFrame(rawFrame: RpcFrame): void {
+    const validated = validateRuntimeFrame(this.#installation, rawFrame);
+    const frame = validated.frame;
     if (frame.type === "ready" && !this.#ready) {
       this.#ready = true;
       const supported = Array.isArray(frame.supportedProtocolVersions) ? frame.supportedProtocolVersions : [];
@@ -431,12 +579,10 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
       } else if (frame.success === true) {
         this.descriptor.error = undefined;
       }
-    } else if (frame.type === "session_info_update") {
-      const sessionFile = frame.sessionFile;
-      if (typeof sessionFile === "string" && sessionFile !== this.descriptor.sessionPath) {
-        this.descriptor.sessionPath = sessionFile;
-        this.#emitStatus(this.descriptor.state);
-      }
+    }
+    if (validated.sessionFile && validated.sessionFile !== this.descriptor.sessionPath) {
+      this.descriptor.sessionPath = validated.sessionFile;
+      this.#emitStatus(this.descriptor.state);
     }
     this.emit("frame", frame);
   }

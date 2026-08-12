@@ -9,24 +9,41 @@ export type RuntimeState =
   | "failed"
   | "exited";
 
+export type OmpRuntimeKind = "windows-native" | "wsl" | "linux-direct";
+
 export interface OmpInstallation {
-  distro: string;
+  id: string;
+  kind: OmpRuntimeKind;
+  label: string;
+  /** Undefined identifies OMP's implicit default profile. */
+  profile?: string;
   executablePath: string;
   version: string;
+  /** OMP's config-facing agent directory (`omp config path`). */
   agentDir: string;
-  direct: boolean;
+  /**
+   * Authoritative root for data-class files such as `agent.db` and `sessions/`.
+   * Under OMP's XDG layout this is the flattened profile data root, so it does
+   * not end in `agent/` and can differ from the config-facing `agentDir`.
+   */
+  dataDir?: string;
+  distro?: string;
 }
 
 export interface EnvironmentInfo {
   platform: string;
-  mode: "windows-wsl" | "linux-direct" | "unsupported";
+  mode: "windows-dual" | "linux-direct" | "unsupported";
   installations: OmpInstallation[];
-  selectedDistro?: string;
   diagnostics: string[];
 }
 
 export interface SessionSummary {
   id: string;
+  installationId: string;
+  runtimeKind: OmpRuntimeKind;
+  runtimeLabel: string;
+  /** Undefined identifies OMP's implicit default profile. */
+  profile?: string;
   path: string;
   cwd: string;
   title: string;
@@ -49,8 +66,7 @@ export interface SessionMetadataPatch {
 }
 
 export interface TrashSessionInput {
-  distro: string;
-  installationPath: string;
+  installationId: string;
   path: string;
 }
 
@@ -61,8 +77,7 @@ export interface TrashSessionResult {
 }
 
 export interface DeleteSessionInput {
-  distro: string;
-  installationPath: string;
+  installationId: string;
   path: string;
 }
 
@@ -113,14 +128,12 @@ export interface ThemeSnapshot {
 }
 
 export interface WorkspaceInput {
-  distro: string;
+  installationId: string;
   path: string;
 }
 
 export interface StartRuntimeInput extends WorkspaceInput {
-  installationPath: string;
   sessionPath?: string;
-  profile?: string;
   initialPrompt?: string;
 }
 
@@ -129,7 +142,11 @@ export interface RuntimeDescriptor {
   state: RuntimeState;
   sessionPath?: string;
   cwd: string;
-  distro: string;
+  installationId: string;
+  runtimeKind: OmpRuntimeKind;
+  /** Undefined identifies OMP's implicit default profile. */
+  profile?: string;
+  distro?: string;
   pid?: number;
   error?: string;
 }
@@ -151,26 +168,43 @@ export interface RuntimeStatusEnvelope {
 }
 
 export interface AppSettings {
+  selectedInstallationId?: string;
+  recentWorkspaces?: Record<string, string>;
+  /** @deprecated Retained only while migrating settings written before v0.1.0. */
   selectedDistro?: string;
+  /** @deprecated Retained only while migrating settings written before v0.1.0. */
   selectedInstallationPath?: string;
+  /** @deprecated Retained only while migrating settings written before v0.1.0. */
   lastWorkspace?: string;
   themeMode: "system" | "dark" | "light";
+  /** @deprecated Profiles are represented by selectedInstallationId. */
   profile?: string;
   handedOffSessions?: SessionHandoff[];
 }
 
 export interface SessionHandoff {
-  distro: string;
-  installationPath: string;
+  /** Missing only on legacy WSL leases that could not yet be migrated safely. */
+  installationId?: string;
   sessionPath: string;
   cwd: string;
   handedOffAt: string;
+  /** @deprecated Retained only while migrating settings written before v0.1.0. */
+  distro?: string;
+  /** @deprecated Retained only while migrating settings written before v0.1.0. */
+  installationPath?: string;
 }
 
-export interface OpenTerminalInput extends WorkspaceInput {
-  installationPath: string;
-  sessionPath?: string;
-  profile?: string;
+export interface ReclaimSessionInput extends WorkspaceInput {
+  sessionPath: string;
+}
+
+export interface ReclaimSessionResult {
+  descriptor: RuntimeDescriptor;
+  settings: AppSettings;
+}
+
+export interface HandoffSessionInput extends WorkspaceInput {
+  sessionPath: string;
 }
 
 export interface OmpDesktopApi {
@@ -178,16 +212,17 @@ export interface OmpDesktopApi {
     detect(): Promise<EnvironmentInfo>;
   };
   sessions: {
-    list(input: { distro: string; installationPath: string; includeArchived?: boolean }): Promise<SessionSummary[]>;
+    list(input: { installationId: string; includeArchived?: boolean }): Promise<SessionSummary[]>;
     update(
-      input: { distro: string; installationPath: string; path: string },
+      input: { installationId: string; path: string },
       patch: SessionMetadataPatch,
     ): Promise<SessionSummary>;
     trash(input: TrashSessionInput): Promise<TrashSessionResult>;
     delete(input: DeleteSessionInput): Promise<DeleteSessionResult>;
+    reclaim(input: ReclaimSessionInput): Promise<ReclaimSessionResult>;
   };
   theme: {
-    get(input: { distro: string; installationPath: string; mode: "dark" | "light" }): Promise<ThemeSnapshot>;
+    get(input: { installationId: string; mode: "dark" | "light" }): Promise<ThemeSnapshot>;
   };
   runtime: {
     start(input: StartRuntimeInput): Promise<RuntimeDescriptor>;
@@ -198,12 +233,12 @@ export interface OmpDesktopApi {
     onStatus(callback: (event: RuntimeStatusEnvelope) => void): () => void;
   };
   system: {
-    chooseWorkspace(distro: string): Promise<string | null>;
-    openTerminal(input: OpenTerminalInput): Promise<void>;
-    openPath(input: WorkspaceInput): Promise<void>;
+    chooseWorkspace(installationId: string): Promise<string | null>;
+    handoffToTerminal(input: HandoffSessionInput): Promise<AppSettings>;
   };
   settings: {
     get(): Promise<AppSettings>;
     update(patch: Partial<AppSettings>): Promise<AppSettings>;
+    migrateHandoffs(handoffs: SessionHandoff[]): Promise<AppSettings>;
   };
 }

@@ -257,6 +257,100 @@ select:focus-visible {
   font-weight: 500;
 }
 
+.runtime-picker {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  margin: 0 10px 4px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--omp-border-muted) 58%, transparent);
+  border-radius: 9px;
+  color: var(--omp-muted);
+  background: color-mix(in srgb, var(--app-bg) 38%, transparent);
+}
+
+.runtime-picker:focus-within {
+  border-color: color-mix(in srgb, var(--omp-accent) 66%, var(--omp-border));
+}
+
+.runtime-picker__body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.runtime-picker small {
+  color: var(--omp-dim);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.runtime-picker select {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--omp-text);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 580;
+  text-overflow: ellipsis;
+}
+
+.runtime-picker select:disabled {
+  opacity: 1;
+  color: var(--omp-muted);
+}
+
+.runtime-picker__controls {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.runtime-picker__controls select + select {
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--omp-border-muted) 45%, transparent);
+}
+
+.runtime-picker__summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.runtime-picker__summary strong {
+  overflow: hidden;
+  color: var(--omp-text);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-picker__summary em {
+  overflow: hidden;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 22%, var(--omp-border-muted));
+  border-radius: 999px;
+  color: var(--omp-muted);
+  font-size: 8.5px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-picker--readonly {
+  border-color: transparent;
+  background: transparent;
+}
+
 .workspace-picker {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) 18px;
@@ -456,6 +550,33 @@ select:focus-visible {
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-runtime-badges {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.session-runtime-badge {
+  align-self: flex-start;
+  overflow: hidden;
+  max-width: 100%;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 24%, var(--omp-border-muted));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--omp-accent) 72%, var(--omp-muted));
+  background: color-mix(in srgb, var(--omp-accent) 7%, transparent);
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-runtime-badge--profile {
+  color: var(--omp-muted);
+  background: transparent;
 }
 
 .session-menu-trigger {
@@ -1088,9 +1209,9 @@ select:focus-visible {
 .composer-area::before {
   position: absolute;
   z-index: -1;
-  right: -30vw;
+  right: 0;
   bottom: 0;
-  left: -30vw;
+  left: 0;
   height: 140px;
   background: linear-gradient(transparent, var(--app-bg) 55%);
   content: "";
@@ -1320,6 +1441,11 @@ select:focus-visible {
   background: var(--omp-tool-error-bg);
 }
 
+.rename-dialog header > span {
+  color: var(--omp-accent);
+  background: color-mix(in srgb, var(--omp-accent) 12%, var(--app-card));
+}
+
 .permission-dialog header > div,
 .settings-dialog header > div,
 .trash-dialog header > div {
@@ -1430,36 +1556,262 @@ select:focus-visible {
   line-height: 1.65;
 }
 
-.delete-confirmation {
+.rename-field {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  margin-top: 13px;
+  margin-top: 12px;
 }
 
-.delete-confirmation > span {
+.rename-field > span {
   color: var(--omp-muted);
   font: 11px/1.4 Inter, "Segoe UI", sans-serif;
 }
 
-.delete-confirmation input {
+.rename-field input {
   width: 100%;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--omp-error) 60%, var(--omp-border-muted));
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--omp-border-muted);
   border-radius: 8px;
   outline: 0;
   color: var(--omp-text);
   background: var(--app-bg);
 }
 
-.delete-confirmation input:focus {
+.rename-field input:focus {
+  border-color: var(--omp-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--omp-accent) 10%, transparent);
+}
+
+.rename-field input[aria-invalid="true"] {
   border-color: var(--omp-error);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--omp-error) 12%, transparent);
+}
+
+.trash-dialog__body .rename-dialog__error {
+  margin: 4px 0 0;
+  color: var(--omp-error);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .danger-button--permanent:not(:disabled) {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--omp-error) 55%, #fff);
+}
+
+.new-session-dialog {
+  display: flex;
+  overflow: hidden;
+  width: min(570px, 100%);
+  max-height: calc(100vh - 64px);
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--omp-border-accent) 70%, transparent);
+  border-radius: 15px;
+  background: var(--app-card);
+  box-shadow: 0 25px 90px rgba(0, 0, 0, 0.35);
+}
+
+.new-session-dialog header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--omp-border-muted) 48%, transparent);
+}
+
+.new-session-dialog header > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--omp-accent);
+  background: color-mix(in srgb, var(--omp-accent) 12%, var(--app-card));
+}
+
+.new-session-dialog header > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.new-session-dialog header small {
+  color: var(--omp-dim);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.new-session-dialog h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.new-session-dialog form {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.new-session-dialog__body {
+  display: flex;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 15px;
+  padding: 18px 20px 20px;
+}
+
+.new-session-dialog__body > p:first-child {
+  margin: 0;
+  color: var(--omp-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.new-session-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.new-session-field > span {
+  color: var(--omp-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.new-session-field > select {
+  width: 100%;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--omp-border-muted);
+  border-radius: 9px;
+  outline: 0;
+  color: var(--omp-text);
+  background: var(--app-bg);
+}
+
+.new-session-field > select:focus {
+  border-color: var(--omp-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--omp-accent) 10%, transparent);
+}
+
+.new-session-backends {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.new-session-backends > button {
+  display: flex;
+  min-width: 0;
+  min-height: 58px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--omp-border-muted) 75%, transparent);
+  border-radius: 10px;
+  color: var(--omp-muted);
+  background: color-mix(in srgb, var(--app-bg) 58%, transparent);
+  text-align: left;
+}
+
+.new-session-backends > button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--omp-accent) 66%, var(--omp-border));
+}
+
+.new-session-backends > button.is-selected {
+  border-color: var(--omp-accent);
+  color: var(--omp-text);
+  background: color-mix(in srgb, var(--omp-accent) 9%, var(--app-card));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--omp-accent) 18%, transparent);
+}
+
+.new-session-backends > button:only-child {
+  grid-column: 1 / -1;
+}
+
+.new-session-backends > button span {
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.new-session-backends > button small {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--omp-dim);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-session-backends > button.is-selected small {
+  color: var(--omp-muted);
+}
+
+.new-session-empty {
+  padding: 13px;
+  border: 1px dashed var(--omp-border-muted);
+  border-radius: 9px;
+  color: var(--omp-warning);
+  background: var(--app-info);
+  font-size: 10.5px;
+}
+
+.new-session-workspace {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 54px;
+  padding: 8px 8px 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--omp-border-muted) 72%, transparent);
+  border-radius: 10px;
+  color: var(--omp-dim);
+  background: color-mix(in srgb, var(--app-bg) 55%, transparent);
+}
+
+.new-session-workspace output {
+  overflow: hidden;
+  color: var(--omp-muted);
+  font: 10.5px/1.4 ui-monospace, "Cascadia Code", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-session-workspace .secondary-button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.new-session-dialog__body .new-session-dialog__error {
+  margin: -3px 0 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--omp-error) 45%, var(--omp-border-muted));
+  border-radius: 8px;
+  color: var(--omp-error);
+  background: var(--omp-tool-error-bg);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.new-session-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--omp-border-muted) 42%, transparent);
 }
 
 .settings-dialog {
@@ -1479,7 +1831,7 @@ select:focus-visible {
   gap: 6px;
 }
 
-.settings-grid label:last-child {
+.settings-grid__theme {
   grid-column: 1 / -1;
 }
 
@@ -1679,6 +2031,14 @@ select:focus-visible {
   .welcome-grid span { margin-bottom: 8px; }
   .conversation-header { padding-right: 138px; }
   .header-chip { display: none; }
+}
+
+@media (max-width: 620px) {
+  .modal-backdrop { padding: 16px; }
+  .new-session-dialog { max-height: calc(100vh - 32px); }
+  .new-session-backends { grid-template-columns: 1fr; }
+  .new-session-workspace { grid-template-columns: 20px minmax(0, 1fr); }
+  .new-session-workspace .secondary-button { grid-column: 1 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

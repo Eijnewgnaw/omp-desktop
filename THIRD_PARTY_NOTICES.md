@@ -1,9 +1,31 @@
-# Third-party notices
+# Third-Party Notices
+
+OMP Desktop bundles theme definitions derived from
+[Oh My Pi](https://github.com/can1357/oh-my-pi), currently synchronized from
+OMP 17.2.12 in `src/shared/omp-themes.generated.json`.
 
 ## Oh My Pi
 
-本项目包含从 [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi) `v17.2.12` 生成的内置主题数据，用于让桌面界面匹配用户现有的 OMP 配色。
+MIT License
 
-Oh My Pi is licensed under the MIT License. Copyright belongs to the Oh My Pi contributors. The upstream license and copyright notice apply to the derived theme data in `src/shared/omp-themes.generated.json`.
+Copyright (c) 2025 Mario Zechner
 
-OMP Desktop 本身不是 Oh My Pi 的官方发行版。其他 npm 依赖的许可证可通过 `npm` 锁文件和各软件包中的许可证文件查看。
+Copyright (c) 2025-2026 Can Bölük
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { dataDirFromGcPlan } from "../src/main/environment-service";
 import { OmpRpcClient } from "../src/main/omp-rpc-client";
 import type { RpcFrame } from "../src/shared/contracts";
 
@@ -11,10 +12,25 @@ const ompPath = process.env.OMP_EXECUTABLE
 describe.skipIf(!integrationEnabled)("real OMP RPC integration", () => {
   it("handshakes, reads state, and lists selectable models without invoking one", async () => {
     await access(ompPath);
+    const agentDir = execFileSync(ompPath, ["--profile", "default", "config", "path"], {
+      encoding: "utf8",
+    }).trim();
+    const gcPlan = execFileSync(ompPath, ["--profile", "default", "gc", "--json", "--wal"], {
+      encoding: "utf8",
+    });
+    const dataDir = dataDirFromGcPlan({ kind: "linux-direct" }, gcPlan, agentDir);
     const client = new OmpRpcClient(
       "019ff18b-2e8c-70b2-8700-ec77ab0171aa",
-      { distro: "direct", executablePath: ompPath, version: "17.2.12", agentDir: "/tmp", direct: true },
-      { distro: "direct", installationPath: ompPath, path: "/tmp" },
+      {
+        id: `linux-direct:${ompPath}`,
+        kind: "linux-direct",
+        label: "Local Linux OMP",
+        executablePath: ompPath,
+        version: "17.2.12",
+        agentDir,
+        ...(dataDir && dataDir !== agentDir ? { dataDir } : {}),
+      },
+      { installationId: `linux-direct:${ompPath}`, path: "/tmp" },
     );
     await client.start();
     const stateResponse = new Promise<RpcFrame>(resolve => {
