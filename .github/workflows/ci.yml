@@ -21,3 +21,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: sudo npx playwright install-deps chromium
+      - run: xvfb-run --auto-servernum npm run test:e2e:resume

@@ -48,6 +48,26 @@ export interface SessionMetadataPatch {
   tags?: string[];
 }
 
+export interface TrashSessionInput {
+  distro: string;
+  installationPath: string;
+  path: string;
+}
+
+export interface TrashSessionResult {
+  originalPath: string;
+  trashPath: string;
+  artifactTrashPath?: string;
+}
+
+export interface OmpModelInfo {
+  provider: string;
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+}
+
 export interface ThemeJson {
   name: string;
   vars?: Record<string, string | number>;
@@ -140,6 +160,7 @@ export interface OmpDesktopApi {
   sessions: {
     list(input: { distro: string; installationPath: string; includeArchived?: boolean }): Promise<SessionSummary[]>;
     update(path: string, patch: SessionMetadataPatch): Promise<SessionSummary>;
+    trash(input: TrashSessionInput): Promise<TrashSessionResult>;
   };
   theme: {
     get(input: { distro: string; installationPath: string; mode: "dark" | "light" }): Promise<ThemeSnapshot>;

@@ -61,4 +61,98 @@ describe("session indexing", () => {
     expect(await fs.readFile(sessionPath, "utf8")).toBe(original);
     store.close();
   });
+
+  it("moves a session and its artifact directory into the recoverable app trash", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-desktop-trash-"));
+    temporaryDirectories.push(root);
+    const bucket = path.join(root, "sessions", "abs-demo-hash");
+    await fs.mkdir(bucket, { recursive: true });
+    const sessionPath = path.join(bucket, "2026-08-12_session-id.jsonl");
+    const artifactPath = sessionPath.slice(0, -".jsonl".length);
+    const content = `${JSON.stringify({
+      type: "session",
+      id: "session-id",
+      timestamp: "2026-08-12T00:00:00.000Z",
+      cwd: "/work/demo",
+    })}\n`;
+    await fs.writeFile(sessionPath, content);
+    await fs.mkdir(artifactPath);
+    await fs.writeFile(path.join(artifactPath, "result.txt"), "kept");
+    const unrelated = path.join(root, "do-not-touch.txt");
+    await fs.writeFile(unrelated, "safe");
+
+    const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
+    const index = new SessionIndex(store);
+    const installation = {
+      distro: "direct",
+      executablePath: "/usr/bin/omp",
+      version: "17.2.12",
+      agentDir: root,
+      direct: true,
+    };
+    await index.list(installation);
+    const result = await index.trash(installation, sessionPath);
+
+    await expect(fs.stat(sessionPath)).rejects.toThrow();
+    await expect(fs.stat(artifactPath)).rejects.toThrow();
+    expect(await fs.readFile(result.trashPath, "utf8")).toBe(content);
+    expect(result.artifactTrashPath).toBeDefined();
+    expect(await fs.readFile(path.join(result.artifactTrashPath!, "result.txt"), "utf8")).toBe("kept");
+    expect(await fs.readFile(unrelated, "utf8")).toBe("safe");
+    expect(await index.list(installation)).toEqual([]);
+    store.close();
+  });
+
+  it("refuses to move files outside the installation session root", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-desktop-trash-boundary-"));
+    temporaryDirectories.push(root);
+    await fs.mkdir(path.join(root, "sessions"), { recursive: true });
+    const outside = path.join(root, "outside.jsonl");
+    await fs.writeFile(outside, "{}\n");
+    const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
+    const index = new SessionIndex(store);
+    const installation = {
+      distro: "direct",
+      executablePath: "/usr/bin/omp",
+      version: "17.2.12",
+      agentDir: root,
+      direct: true,
+    };
+
+    await expect(index.trash(installation, outside)).rejects.toThrow("outside the OMP sessions directory");
+    expect(await fs.readFile(outside, "utf8")).toBe("{}\n");
+    store.close();
+  });
+
+  it("refuses an adjacent artifact path that is not a directory", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-desktop-trash-artifact-"));
+    temporaryDirectories.push(root);
+    const bucket = path.join(root, "sessions", "abs-demo-hash");
+    await fs.mkdir(bucket, { recursive: true });
+    const sessionPath = path.join(bucket, "2026-08-12_session-id.jsonl");
+    const artifactPath = sessionPath.slice(0, -".jsonl".length);
+    const content = `${JSON.stringify({
+      type: "session",
+      id: "session-id",
+      timestamp: "2026-08-12T00:00:00.000Z",
+      cwd: "/work/demo",
+    })}\n`;
+    await fs.writeFile(sessionPath, content);
+    await fs.writeFile(artifactPath, "unexpected sibling file");
+    const store = new MetadataStore(path.join(root, "metadata.sqlite3"));
+    const index = new SessionIndex(store);
+    const installation = {
+      distro: "direct",
+      executablePath: "/usr/bin/omp",
+      version: "17.2.12",
+      agentDir: root,
+      direct: true,
+    };
+    await index.list(installation);
+
+    await expect(index.trash(installation, sessionPath)).rejects.toThrow("artifacts must be a directory");
+    expect(await fs.readFile(sessionPath, "utf8")).toBe(content);
+    expect(await fs.readFile(artifactPath, "utf8")).toBe("unexpected sibling file");
+    store.close();
+  });
 });

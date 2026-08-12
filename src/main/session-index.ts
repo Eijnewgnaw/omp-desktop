@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import path from "node:path";
-import type { OmpInstallation, SessionSummary } from "../shared/contracts";
+import type { OmpInstallation, SessionSummary, TrashSessionResult } from "../shared/contracts";
 import { MetadataStore } from "./metadata-store";
 import { wslPathToHostPath } from "./security";
 
@@ -64,6 +64,14 @@ async function sessionFiles(directory: string): Promise<string[]> {
 function toWslPath(hostRoot: string, wslRoot: string, hostFile: string): string {
   const relative = path.relative(hostRoot, hostFile).split(path.sep).join("/");
   return path.posix.join(wslRoot, relative);
+}
+
+function containedRelativePath(root: string, candidate: string): string {
+  const relative = path.relative(root, candidate);
+  if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+    throw new Error("Session path is outside the OMP sessions directory");
+  }
+  return relative;
 }
 
 export class SessionIndex {
@@ -131,5 +139,60 @@ export class SessionIndex {
     const updated = this.#store.updateSession(existing, patch);
     this.#cache.set(pathValue, updated);
     return updated;
+  }
+
+  async trash(installation: OmpInstallation, sessionPath: string): Promise<TrashSessionResult> {
+    const sessionsWslRoot = path.posix.join(installation.agentDir, "sessions");
+    const sessionsHostRoot = installation.direct
+      ? path.resolve(installation.agentDir, "sessions")
+      : wslPathToHostPath(installation.distro, sessionsWslRoot);
+    const sourceHostPath = installation.direct
+      ? path.resolve(sessionPath)
+      : wslPathToHostPath(installation.distro, sessionPath);
+    const relative = containedRelativePath(sessionsHostRoot, sourceHostPath);
+    if (path.extname(sourceHostPath).toLowerCase() !== ".jsonl") {
+      throw new Error("Only indexed OMP JSONL sessions can be moved to Trash");
+    }
+    if (!this.#cache.has(sessionPath)) throw new Error("Session must be indexed before it can be moved to Trash");
+    const sourceStat = await fs.stat(sourceHostPath).catch(() => undefined);
+    if (!sourceStat?.isFile()) throw new Error("OMP session file no longer exists");
+
+    const trashWslRoot = path.posix.join(installation.agentDir, "trash", "omp-desktop");
+    const trashHostRoot = installation.direct
+      ? path.resolve(installation.agentDir, "trash", "omp-desktop")
+      : wslPathToHostPath(installation.distro, trashWslRoot);
+    const batch = `${new Date().toISOString().replace(/[:.]/g, "-")}_${crypto.randomUUID()}`;
+    const destinationHostPath = path.join(trashHostRoot, batch, relative);
+    const sourceArtifactPath = sourceHostPath.slice(0, -".jsonl".length);
+    const destinationArtifactPath = destinationHostPath.slice(0, -".jsonl".length);
+    const artifactStat = await fs.lstat(sourceArtifactPath).catch(() => undefined);
+    const hasArtifacts = artifactStat?.isDirectory() ?? false;
+    if (artifactStat && !hasArtifacts) {
+      throw new Error("OMP session artifacts must be a directory before they can be moved to Trash");
+    }
+
+    await fs.mkdir(path.dirname(destinationHostPath), { recursive: true });
+    await fs.rename(sourceHostPath, destinationHostPath);
+    try {
+      if (hasArtifacts) await fs.rename(sourceArtifactPath, destinationArtifactPath);
+    } catch (error) {
+      try {
+        await fs.rename(destinationHostPath, sourceHostPath);
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "Failed to move OMP artifacts and restore the session file");
+      }
+      throw error;
+    }
+    this.#cache.delete(sessionPath);
+
+    const relativeWsl = relative.split(path.sep).join("/");
+    const trashPath = installation.direct
+      ? destinationHostPath
+      : path.posix.join(trashWslRoot, batch, relativeWsl);
+    return {
+      originalPath: sessionPath,
+      trashPath,
+      artifactTrashPath: hasArtifacts ? trashPath.slice(0, -".jsonl".length) : undefined,
+    };
   }
 }

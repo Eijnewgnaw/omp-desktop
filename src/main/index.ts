@@ -11,6 +11,8 @@ let cleanupIpc: (() => void) | undefined;
 let store: MetadataStore | undefined;
 const runtimes = new RuntimeManager();
 let allowClose = false;
+let shutdownInProgress = false;
+let shutdownComplete = false;
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -58,7 +60,16 @@ function createWindow(): BrowserWindow {
     }
     event.preventDefault();
     allowClose = true;
-    void runtimes.stopAll().finally(() => window.destroy());
+    void runtimes.stopAll().then(
+      () => window.destroy(),
+      error => {
+        allowClose = false;
+        dialog.showErrorBox(
+          "无法安全停止 OMP",
+          error instanceof Error ? error.message : String(error),
+        );
+      },
+    );
   });
 
   if (process.env.ELECTRON_RENDERER_URL) void window.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -90,8 +101,30 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-app.on("before-quit", () => {
+app.on("before-quit", event => {
+  if (shutdownComplete || runtimes.list().length === 0) {
+    shutdownComplete = true;
+    allowClose = true;
+    return;
+  }
+  event.preventDefault();
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
   allowClose = true;
+  void runtimes.stopAll().then(
+    () => {
+      shutdownComplete = true;
+      app.quit();
+    },
+    error => {
+      shutdownInProgress = false;
+      allowClose = false;
+      dialog.showErrorBox(
+        "无法安全退出 OMP Desktop",
+        error instanceof Error ? error.message : String(error),
+      );
+    },
+  );
 });
 
 app.on("window-all-closed", () => {

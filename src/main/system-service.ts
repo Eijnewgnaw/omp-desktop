@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import path from "node:path";
 import { dialog, shell } from "electron";
 import type { OpenTerminalInput, WorkspaceInput } from "../shared/contracts";
@@ -32,27 +32,116 @@ export async function openWorkspacePath(input: WorkspaceInput): Promise<void> {
   if (error) throw new Error(error);
 }
 
-export function openOmpTerminal(input: OpenTerminalInput): void {
+export interface TerminalLaunch {
+  command: string;
+  args: string[];
+  options: SpawnOptions;
+  displayName: string;
+}
+
+type SpawnTerminal = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
+
+const TERMINAL_STARTUP_WINDOW_MS = 250;
+
+// Windows Terminal treats semicolons inside the child command line as action
+// separators. Prefix literal semicolons so paths and profile names stay in the
+// single new-tab command that we construct.
+function escapeWindowsTerminalArgument(value: string): string {
+  return value.replaceAll(";", "\\;");
+}
+
+export function buildOmpTerminalLaunch(
+  input: OpenTerminalInput,
+  platform: NodeJS.Platform = process.platform,
+  terminal = process.env.TERMINAL || "x-terminal-emulator",
+): TerminalLaunch {
   const distro = assertDistro(input.distro);
   const cwd = assertWslPath(input.path, "workspace path");
   const ompPath = assertWslPath(input.installationPath, "OMP executable");
   const ompArgs = [ompPath, "--cwd", cwd];
   if (input.profile) ompArgs.push("--profile", input.profile);
   if (input.sessionPath) ompArgs.push("--resume", assertWslPath(input.sessionPath, "session path"));
-  if (process.platform === "win32") {
-    const child = spawn("wt.exe", ["new-tab", "--", "wsl.exe", "-d", distro, "--cd", cwd, "--exec", ...ompArgs], {
+  if (platform === "win32") {
+    const commandline = ["wsl.exe", "-d", distro, "--cd", cwd, "--exec", ...ompArgs]
+      .map(escapeWindowsTerminalArgument);
+    return {
+      command: "wt.exe",
+      args: ["new-tab", ...commandline],
+      options: {
+        detached: true,
+        windowsHide: true,
+        stdio: "ignore",
+      },
+      displayName: "Windows Terminal",
+    };
+  }
+
+  return {
+    command: terminal,
+    args: ["-e", ompPath, ...ompArgs.slice(1)],
+    options: {
+      cwd: path.posix.normalize(cwd),
       detached: true,
-      windowsHide: true,
       stdio: "ignore",
+    },
+    displayName: "terminal",
+  };
+}
+
+function launchError(displayName: string, detail: string, cause?: unknown): Error {
+  return new Error(`Failed to start ${displayName}: ${detail}`, cause === undefined ? undefined : { cause });
+}
+
+export async function spawnDetachedTerminal(
+  launch: TerminalLaunch,
+  spawnTerminal: SpawnTerminal = spawn,
+  startupWindowMs = TERMINAL_STARTUP_WINDOW_MS,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let child: ChildProcess;
+    let spawned = false;
+    let settled = false;
+    let startupTimer: NodeJS.Timeout | undefined;
+
+    const resolveOnce = (): void => {
+      if (settled) return;
+      settled = true;
+      if (startupTimer) clearTimeout(startupTimer);
+      resolve();
+    };
+    const rejectOnce = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (startupTimer) clearTimeout(startupTimer);
+      reject(error);
+    };
+
+    try {
+      child = spawnTerminal(launch.command, launch.args, launch.options);
+    } catch (error) {
+      rejectOnce(launchError(launch.displayName, error instanceof Error ? error.message : String(error), error));
+      return;
+    }
+
+    child.once("error", error => {
+      rejectOnce(launchError(launch.displayName, error.message, error));
+    });
+    child.once("spawn", () => {
+      spawned = true;
+      startupTimer = setTimeout(resolveOnce, Math.max(0, startupWindowMs));
+    });
+    child.once("exit", (code, signal) => {
+      if (!spawned || code !== 0 || signal !== null) {
+        const detail = signal ? `exited with signal ${signal}` : `exited with code ${String(code)}`;
+        rejectOnce(launchError(launch.displayName, detail));
+        return;
+      }
+      resolveOnce();
     });
     child.unref();
-    return;
-  }
-  const terminal = process.env.TERMINAL || "x-terminal-emulator";
-  const child = spawn(terminal, ["-e", ompPath, ...ompArgs.slice(1)], {
-    cwd: path.posix.normalize(cwd),
-    detached: true,
-    stdio: "ignore",
   });
-  child.unref();
+}
+
+export async function openOmpTerminal(input: OpenTerminalInput): Promise<void> {
+  await spawnDetachedTerminal(buildOmpTerminalLaunch(input));
 }
