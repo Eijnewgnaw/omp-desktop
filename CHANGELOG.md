@@ -6,7 +6,7 @@
 
 - 新增 macOS 原生 OMP 适配：发现 Homebrew、`~/.local/bin` 与登录 shell 中的 OMP，复用 Profile、RPC、会话索引、主题和所有权隔离逻辑。
 - 新增安全的 macOS Terminal 会话交接，以及适配系统交通灯的 Electron 窗口标题栏。
-- 新增 Apple Silicon/Intel DMG 与 ZIP 打包配置、macOS CI 和发布工作流；当前产物尚未签名或公证。
+- 新增 Apple Silicon DMG 与 ZIP 打包配置、macOS CI 和发布工作流；当前产物尚未签名或公证。
 
 ## 0.1.0 - 2026-08-12
 

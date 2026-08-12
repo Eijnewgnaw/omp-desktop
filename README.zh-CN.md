@@ -60,7 +60,6 @@ OMP Desktop 是 [Oh My Pi（OMP）](https://github.com/can1357/oh-my-pi) 的本�
 | Windows 11 x64 + WSL2 OMP | **已支持** |
 | Default 与命名 OMP Profiles | **已支持** |
 | Apple Silicon macOS | **已支持** |
-| Intel macOS | **已支持** |
 | 原生 Linux 桌面 | 暂不支持 |
 
 ## 安装

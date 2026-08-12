@@ -9,7 +9,7 @@ This document covers source setup, validation, packaging, and release convention
 - macOS for native OMP and DMG/ZIP validation, or Windows 11 with native Windows OMP and WSL2 OMP
 - A working OMP installation for the opt-in real RPC integration test
 
-WSLg can run the Linux development shell. Release targets are Apple Silicon and Intel macOS packages plus one Windows x64 package; each runtime adapter and Profile remains isolated.
+WSLg can run the Linux development shell. Release targets are one Apple Silicon macOS package set and one Windows x64 package; the Windows package supports both native Windows OMP and WSL2 OMP, while each runtime adapter and Profile remains isolated.
 
 ## Setup
 
@@ -51,7 +51,7 @@ On Apple Silicon:
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist -- --mac --arm64 --publish never
 ```
 
-On Intel macOS, replace `--arm64` with `--x64`. DMG and ZIP artifacts are written to `release/`. Current macOS packages are unsigned and not notarized; do not describe them as signed or notarized.
+DMG and ZIP artifacts are written to `release/`. Current macOS packages are unsigned and not notarized; do not describe them as signed or notarized.
 
 ## Build a Windows installer
 

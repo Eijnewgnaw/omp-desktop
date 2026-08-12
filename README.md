@@ -60,7 +60,6 @@ Each saved session keeps its own runtime, Profile, and workspace. macOS `/...`, 
 | Windows 11 x64 + OMP in WSL2 | **Available** |
 | Default and named OMP Profiles | **Available** |
 | macOS on Apple Silicon | **Available** |
-| macOS on Intel | **Available** |
 | Native Linux desktop | Not currently supported |
 
 ## Install
