@@ -2,7 +2,7 @@
 
 本项目遵循语义化版本。预发布阶段的接口和数据结构仍可能变化。
 
-## Unreleased
+## 0.2.0 - 2026-08-12
 
 - 新增 macOS 原生 OMP 适配：发现 Homebrew、`~/.local/bin` 与登录 shell 中的 OMP，复用 Profile、RPC、会话索引、主题和所有权隔离逻辑。
 - 新增安全的 macOS Terminal 会话交接，以及适配系统交通灯的 Electron 窗口标题栏。
