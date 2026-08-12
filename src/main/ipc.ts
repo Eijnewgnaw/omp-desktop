@@ -80,6 +80,11 @@ export function registerIpc(window: BrowserWindow, services: IpcServices): () =>
   ipcMain.handle("sessions:update", (_event, sessionPath: unknown, rawPatch: unknown) =>
     services.sessions.update(pathSchema.parse(sessionPath), metadataPatchSchema.parse(rawPatch)),
   );
+  ipcMain.handle("sessions:trash", async (_event, raw: unknown) => {
+    const input = installationInputSchema.extend({ path: pathSchema }).parse(raw);
+    const installation = await installationFor(input.distro, input.installationPath);
+    return services.sessions.trash(installation, input.path);
+  });
 
   ipcMain.handle("theme:get", async (_event, raw: unknown) => {
     const input = installationInputSchema.extend({ mode: z.enum(["dark", "light"]) }).parse(raw);
@@ -105,7 +110,7 @@ export function registerIpc(window: BrowserWindow, services: IpcServices): () =>
   ipcMain.handle("system:open-terminal", async (_event, raw: unknown) => {
     const input = startSchema.omit({ initialPrompt: true }).parse(raw);
     await installationFor(input.distro, input.installationPath);
-    openOmpTerminal(input);
+    await openOmpTerminal(input);
   });
 
   const frameListener = (payload: RuntimeFrameEnvelope): void => {
@@ -126,6 +131,7 @@ export function registerIpc(window: BrowserWindow, services: IpcServices): () =>
       "settings:update",
       "sessions:list",
       "sessions:update",
+      "sessions:trash",
       "theme:get",
       "runtime:start",
       "runtime:send",

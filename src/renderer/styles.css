@@ -365,10 +365,9 @@ select:focus-visible {
   display: grid;
   width: 100%;
   min-height: 57px;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 4px;
-  padding: 9px 8px 8px;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  padding: 0 4px 0 0;
   border-radius: 9px;
   color: var(--omp-muted);
   background: transparent;
@@ -390,6 +389,23 @@ select:focus-visible {
   border-radius: 4px;
   background: var(--omp-accent);
   content: "";
+}
+
+.session-row__main {
+  display: grid;
+  min-width: 0;
+  min-height: 57px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px;
+  padding: 9px 4px 8px 8px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.session-row__main:disabled {
+  cursor: progress;
 }
 
 .session-row__icon {
@@ -424,28 +440,74 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.session-row__actions {
-  display: none;
-  gap: 1px;
-}
-
-.session-row:hover .session-row__actions {
-  display: flex;
-}
-
-.mini-action {
+.session-menu-trigger {
   display: grid;
-  width: 23px;
-  height: 23px;
+  width: 25px;
+  height: 25px;
+  opacity: 0;
   place-items: center;
   border-radius: 6px;
   color: var(--omp-dim);
+  background: transparent;
 }
 
-.mini-action:hover,
-.mini-action--active {
+.session-row:hover .session-menu-trigger,
+.session-menu-trigger:focus-visible,
+.session-menu-trigger.is-active {
+  opacity: 1;
+}
+
+.session-menu-trigger:hover,
+.session-menu-trigger.is-active {
   color: var(--omp-accent);
   background: color-mix(in srgb, var(--app-bg) 65%, transparent);
+}
+
+.session-menu {
+  position: fixed;
+  z-index: 85;
+  display: flex;
+  width: 194px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--omp-border-accent) 66%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-card) 96%, var(--app-bg));
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.38);
+}
+
+.session-menu button {
+  display: grid;
+  min-height: 32px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: var(--omp-muted);
+  background: transparent;
+  font-size: 11px;
+  text-align: left;
+}
+
+.session-menu button:hover:not(:disabled) {
+  color: var(--omp-text);
+  background: var(--omp-selected-bg);
+}
+
+.session-menu button:disabled {
+  opacity: 0.48;
+}
+
+.session-menu .session-menu__danger {
+  color: var(--omp-error);
+}
+
+.session-menu__separator {
+  height: 1px;
+  margin: 3px 5px;
+  background: color-mix(in srgb, var(--omp-border-muted) 54%, transparent);
 }
 
 .tag-line {
@@ -579,6 +641,34 @@ select:focus-visible {
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-select {
+  max-width: 210px;
+  padding-right: 4px;
+}
+
+.model-select select {
+  min-width: 0;
+  max-width: 176px;
+  height: 24px;
+  padding: 0 20px 0 0;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.model-select select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--omp-accent) 70%, transparent);
+  outline-offset: 1px;
+}
+
+.model-select option {
+  color: var(--omp-text);
+  background: var(--app-card);
 }
 
 .conversation-scroll {
@@ -982,6 +1072,28 @@ select:focus-visible {
   pointer-events: none;
 }
 
+.retry-drafts {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 7px;
+  color: var(--omp-warning);
+  font-size: 10px;
+}
+
+.retry-drafts button {
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--omp-warning);
+  background: color-mix(in srgb, var(--omp-warning) 10%, transparent);
+}
+
+.retry-drafts button:hover {
+  background: color-mix(in srgb, var(--omp-warning) 18%, transparent);
+}
+
 .runtime-banner {
   display: flex;
   min-height: 28px;
@@ -1098,7 +1210,8 @@ select:focus-visible {
 }
 
 .primary-button,
-.secondary-button {
+.secondary-button,
+.danger-button {
   display: inline-flex;
   min-height: 34px;
   align-items: center;
@@ -1120,6 +1233,17 @@ select:focus-visible {
   background: var(--app-card);
 }
 
+.danger-button {
+  color: #fff;
+  background: var(--omp-error);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.danger-button:disabled {
+  opacity: 0.55;
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 100;
@@ -1132,7 +1256,8 @@ select:focus-visible {
 }
 
 .permission-dialog,
-.settings-dialog {
+.settings-dialog,
+.trash-dialog {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--omp-border-accent) 70%, transparent);
   border-radius: 15px;
@@ -1145,7 +1270,8 @@ select:focus-visible {
 }
 
 .permission-dialog header,
-.settings-dialog header {
+.settings-dialog header,
+.trash-dialog header {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1153,7 +1279,8 @@ select:focus-visible {
   border-bottom: 1px solid color-mix(in srgb, var(--omp-border-muted) 48%, transparent);
 }
 
-.permission-dialog header > span {
+.permission-dialog header > span,
+.trash-dialog header > span {
   display: grid;
   width: 34px;
   height: 34px;
@@ -1163,8 +1290,14 @@ select:focus-visible {
   background: var(--app-info);
 }
 
+.trash-dialog header > span {
+  color: var(--omp-error);
+  background: var(--omp-tool-error-bg);
+}
+
 .permission-dialog header > div,
-.settings-dialog header > div {
+.settings-dialog header > div,
+.trash-dialog header > div {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -1172,7 +1305,8 @@ select:focus-visible {
 }
 
 .permission-dialog header small,
-.settings-dialog header small {
+.settings-dialog header small,
+.trash-dialog header small {
   color: var(--omp-dim);
   font-size: 9px;
   font-weight: 700;
@@ -1180,7 +1314,8 @@ select:focus-visible {
 }
 
 .permission-dialog h2,
-.settings-dialog h2 {
+.settings-dialog h2,
+.trash-dialog h2 {
   margin: 0;
   font-size: 15px;
   font-weight: 620;
@@ -1231,12 +1366,43 @@ select:focus-visible {
 }
 
 .permission-dialog footer,
-.settings-dialog footer {
+.settings-dialog footer,
+.trash-dialog footer {
   display: flex;
   justify-content: flex-end;
   gap: 7px;
   padding: 12px 18px 16px;
   border-top: 1px solid color-mix(in srgb, var(--omp-border-muted) 42%, transparent);
+}
+
+.trash-dialog {
+  width: min(500px, 100%);
+}
+
+.trash-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 19px 20px 20px;
+}
+
+.trash-dialog__body strong {
+  font-size: 13px;
+}
+
+.trash-dialog__body span {
+  overflow: hidden;
+  color: var(--omp-dim);
+  font: 10px ui-monospace, "Cascadia Code", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-dialog__body p {
+  margin: 11px 0 0;
+  color: var(--omp-muted);
+  font-size: 11px;
+  line-height: 1.65;
 }
 
 .settings-dialog {
@@ -1371,6 +1537,11 @@ select:focus-visible {
   border-radius: 10px;
   background: var(--omp-tool-error-bg);
   box-shadow: 0 14px 45px rgba(0, 0, 0, 0.28);
+}
+
+.error-toast--notice {
+  border-color: color-mix(in srgb, var(--omp-success) 58%, var(--omp-border));
+  background: var(--omp-tool-success-bg);
 }
 
 .error-toast strong,

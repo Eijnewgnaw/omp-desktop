@@ -12,6 +12,8 @@ import type {
   SessionSummary,
   StartRuntimeInput,
   ThemeSnapshot,
+  TrashSessionInput,
+  TrashSessionResult,
   WorkspaceInput,
 } from "../shared/contracts";
 
@@ -23,6 +25,7 @@ const api: OmpDesktopApi = {
     list: input => ipcRenderer.invoke("sessions:list", input) as Promise<SessionSummary[]>,
     update: (path: string, patch: SessionMetadataPatch) =>
       ipcRenderer.invoke("sessions:update", path, patch) as Promise<SessionSummary>,
+    trash: (input: TrashSessionInput) => ipcRenderer.invoke("sessions:trash", input) as Promise<TrashSessionResult>,
   },
   theme: {
     get: input => ipcRenderer.invoke("theme:get", input) as Promise<ThemeSnapshot>,

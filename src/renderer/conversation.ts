@@ -28,6 +28,7 @@ export interface ConversationState {
   sessionId?: string;
   sessionName?: string;
   tokensPerSecond?: number | null;
+  isStreaming?: boolean;
 }
 
 export const initialConversationState: ConversationState = {
@@ -94,13 +95,19 @@ export function reduceRpcFrame(state: ConversationState, frame: RpcFrame): Conve
   if (frame.type === "__reset") return initialConversationState;
 
   if (["message_start", "message_update", "message_end"].includes(frame.type)) {
-    const message = normalizeMessage(frame.message, `${frame.type}-${state.messages.length}`);
+    const raw = frame.message && typeof frame.message === "object" ? frame.message as Record<string, unknown> : undefined;
+    const rawRole = raw?.role === "user" ? "user" : raw?.role === "assistant" ? "assistant" : "system";
+    const activeMessage = [...state.messages].reverse().find(message => message.streaming && message.role === rawRole);
+    const message = normalizeMessage(frame.message, activeMessage?.id ?? `live-${rawRole}-${state.messages.length}`);
     if (!message) return state;
     return {
       ...state,
-      messages: upsertMessage(state.messages, { ...message, streaming: frame.type === "message_update" }),
+      messages: upsertMessage(state.messages, { ...message, streaming: frame.type !== "message_end" }),
     };
   }
+
+  if (frame.type === "agent_start") return { ...state, isStreaming: true };
+  if (frame.type === "agent_end") return frame.isTerminal === false ? state : { ...state, isStreaming: false };
 
   if (frame.type === "tool_execution_start") {
     const id = String(frame.toolCallId ?? crypto.randomUUID());
@@ -181,6 +188,20 @@ export function reduceRpcFrame(state: ConversationState, frame: RpcFrame): Conve
         tokensPerSecond: typeof data.tokensPerSecond === "number" || data.tokensPerSecond === null
           ? data.tokensPerSecond
           : state.tokensPerSecond,
+        isStreaming: typeof data.isStreaming === "boolean" ? data.isStreaming : state.isStreaming,
+      };
+    }
+    if (frame.command === "set_model" && frame.success === true && data) {
+      return {
+        ...state,
+        model: data as ConversationState["model"],
+      };
+    }
+    if (frame.command === "cycle_model" && frame.success === true && data?.model && typeof data.model === "object") {
+      return {
+        ...state,
+        model: data.model as ConversationState["model"],
+        thinkingLevel: typeof data.thinkingLevel === "string" ? data.thinkingLevel : state.thinkingLevel,
       };
     }
   }

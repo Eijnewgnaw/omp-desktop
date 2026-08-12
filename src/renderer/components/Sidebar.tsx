@@ -1,15 +1,20 @@
 import {
   Archive,
+  ArchiveRestore,
   Bot,
   FolderOpen,
+  MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
   Pin,
+  PinOff,
   Plus,
   Search,
   Settings,
   TerminalSquare,
+  Trash2,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { SessionSummary } from "../../shared/contracts";
 import { BrandMark } from "./BrandMark";
 
@@ -20,6 +25,7 @@ interface SidebarProps {
   query: string;
   showArchived: boolean;
   workspace?: string;
+  switching: boolean;
   onCollapse(): void;
   onQuery(value: string): void;
   onToggleArchived(): void;
@@ -28,8 +34,15 @@ interface SidebarProps {
   onOpen(session: SessionSummary): void;
   onPin(session: SessionSummary): void;
   onArchive(session: SessionSummary): void;
+  onTrash(session: SessionSummary): void;
   onOpenTerminal(session?: SessionSummary): void;
   onSettings(): void;
+}
+
+interface SessionMenuState {
+  session: SessionSummary;
+  top: number;
+  left: number;
 }
 
 function relativeTime(value: string): string {
@@ -44,6 +57,48 @@ function relativeTime(value: string): string {
 }
 
 export function Sidebar(props: SidebarProps): React.JSX.Element {
+  const [menu, setMenu] = useState<SessionMenuState>();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: PointerEvent): void => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if ((target as Element).closest?.("[data-session-menu-trigger]")) return;
+      setMenu(undefined);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setMenu(undefined);
+    };
+    const onResize = (): void => setMenu(undefined);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [menu]);
+
+  const openMenu = (session: SessionSummary, target: HTMLElement): void => {
+    const bounds = target.getBoundingClientRect();
+    const menuHeight = 218;
+    setMenu({
+      session,
+      top: Math.min(bounds.bottom + 5, window.innerHeight - menuHeight - 8),
+      left: Math.max(8, bounds.right - 194),
+    });
+  };
+
+  const runMenuAction = (action: (session: SessionSummary) => void): void => {
+    if (!menu) return;
+    const session = menu.session;
+    setMenu(undefined);
+    action(session);
+  };
+
   if (props.collapsed) {
     return (
       <aside className="sidebar sidebar--collapsed">
@@ -51,10 +106,10 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         <button className="icon-button" onClick={props.onCollapse} title="展开侧边栏">
           <Bot size={19} />
         </button>
-        <button className="icon-button icon-button--accent" onClick={props.onNew} title="新建会话">
+        <button className="icon-button icon-button--accent" disabled={props.switching} onClick={props.onNew} title="新建会话">
           <Plus size={19} />
         </button>
-        <button className="icon-button" onClick={props.onChooseWorkspace} title="选择工作区">
+        <button className="icon-button" disabled={props.switching} onClick={props.onChooseWorkspace} title="选择工作区">
           <FolderOpen size={18} />
         </button>
         <div className="sidebar-spacer" />
@@ -78,13 +133,13 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         </button>
       </div>
 
-      <button className="new-session-button" onClick={props.onNew}>
+      <button className="new-session-button" onClick={props.onNew} disabled={props.switching}>
         <Plus size={17} />
         新建会话
         <span>Ctrl N</span>
       </button>
 
-      <button className="workspace-picker" onClick={props.onChooseWorkspace}>
+      <button className="workspace-picker" onClick={props.onChooseWorkspace} disabled={props.switching}>
         <FolderOpen size={16} />
         <span>
           <small>当前工作区</small>
@@ -112,55 +167,78 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         </span>
       </div>
 
-      <div className="session-list">
+      <div className="session-list" onScroll={() => setMenu(undefined)}>
         {props.sessions.length === 0 ? (
           <div className="empty-session-list">暂无匹配会话</div>
         ) : (
           props.sessions.map(session => (
-            <button
+            <div
               className={`session-row${props.activePath === session.path ? " session-row--active" : ""}`}
               key={session.path}
-              onClick={() => props.onOpen(session)}
             >
-              <span className="session-row__icon">{session.runtimeState === "running" ? <span className="pulse-dot" /> : "›"}</span>
-              <span className="session-row__body">
-                <strong>{session.title}</strong>
-                <small>
-                  {session.projectName} · {relativeTime(session.modifiedAt)}
-                </small>
-                {session.tags.length > 0 && (
-                  <span className="tag-line">{session.tags.slice(0, 3).map(tag => <em key={tag}>{tag}</em>)}</span>
-                )}
-              </span>
-              <span className="session-row__actions">
-                <span
-                  className={`mini-action${session.pinned ? " mini-action--active" : ""}`}
-                  onClick={event => {
-                    event.stopPropagation();
-                    props.onPin(session);
-                  }}
-                  title={session.pinned ? "取消置顶" : "置顶"}
-                >
-                  <Pin size={13} />
+              <button className="session-row__main" disabled={props.switching} onClick={() => props.onOpen(session)}>
+                <span className="session-row__icon">{session.runtimeState === "running" ? <span className="pulse-dot" /> : "›"}</span>
+                <span className="session-row__body">
+                  <strong>{session.title}</strong>
+                  <small>
+                    {session.projectName} · {relativeTime(session.modifiedAt)}
+                  </small>
+                  {session.tags.length > 0 && (
+                    <span className="tag-line">{session.tags.slice(0, 3).map(tag => <em key={tag}>{tag}</em>)}</span>
+                  )}
                 </span>
-                <span
-                  className="mini-action"
-                  onClick={event => {
-                    event.stopPropagation();
-                    props.onArchive(session);
-                  }}
-                  title={session.archived ? "恢复会话" : "归档"}
-                >
-                  <Archive size={13} />
-                </span>
-              </span>
-            </button>
+              </button>
+              <button
+                className={`session-menu-trigger${menu?.session.path === session.path ? " is-active" : ""}`}
+                data-session-menu-trigger
+                aria-haspopup="menu"
+                aria-expanded={menu?.session.path === session.path}
+                disabled={props.switching}
+                title="会话操作"
+                onClick={event => {
+                  event.stopPropagation();
+                  if (menu?.session.path === session.path) setMenu(undefined);
+                  else openMenu(session, event.currentTarget);
+                }}
+              >
+                <MoreHorizontal size={15} />
+              </button>
+            </div>
           ))
         )}
       </div>
 
+      {menu && (
+        <div
+          className="session-menu"
+          ref={menuRef}
+          role="menu"
+          style={{ top: menu.top, left: menu.left }}
+        >
+          <button role="menuitem" disabled={props.switching} onClick={() => runMenuAction(props.onOpen)}>
+            <MessageSquare size={14} /><span>继续会话</span>
+          </button>
+          <button role="menuitem" disabled={props.switching} onClick={() => runMenuAction(session => props.onOpenTerminal(session))}>
+            <TerminalSquare size={14} /><span>在原始终端打开</span>
+          </button>
+          <div className="session-menu__separator" />
+          <button role="menuitem" onClick={() => runMenuAction(props.onPin)}>
+            {menu.session.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+            <span>{menu.session.pinned ? "取消置顶" : "置顶"}</span>
+          </button>
+          <button role="menuitem" onClick={() => runMenuAction(props.onArchive)}>
+            {menu.session.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+            <span>{menu.session.archived ? "恢复会话" : "归档会话"}</span>
+          </button>
+          <div className="session-menu__separator" />
+          <button className="session-menu__danger" role="menuitem" disabled={props.switching} onClick={() => runMenuAction(props.onTrash)}>
+            <Trash2 size={14} /><span>移到回收站…</span>
+          </button>
+        </div>
+      )}
+
       <div className="sidebar-footer">
-        <button onClick={() => props.onOpenTerminal()}>
+        <button disabled={props.switching} onClick={() => props.onOpenTerminal()}>
           <TerminalSquare size={16} />
           原始 OMP 终端
         </button>

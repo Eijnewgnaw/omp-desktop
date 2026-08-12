@@ -16,6 +16,56 @@ describe("conversation reducer", () => {
     expect(second.messages[0]?.streaming).toBe(false);
   });
 
+  it("keeps one streamed message when OMP omits message ids and timestamps", () => {
+    const started = reduceRpcFrame(initialConversationState, {
+      type: "message_start",
+      message: { role: "assistant", content: [{ type: "text", text: "开" }] },
+    });
+    const updated = reduceRpcFrame(started, {
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: "开始" }] },
+    });
+    const ended = reduceRpcFrame(updated, {
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "开始完成" }] },
+    });
+    expect(ended.messages).toHaveLength(1);
+    expect(ended.messages[0]).toMatchObject({ text: "开始完成", streaming: false });
+  });
+
+  it("tracks OMP streaming state and successful model changes", () => {
+    const loaded = reduceRpcFrame(initialConversationState, {
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        sessionId: "session-id",
+        isStreaming: false,
+        model: { provider: "openai", id: "gpt-a", name: "GPT A" },
+      },
+    });
+    const running = reduceRpcFrame(loaded, { type: "agent_start" });
+    const changed = reduceRpcFrame(running, {
+      type: "response",
+      command: "set_model",
+      success: true,
+      data: { provider: "openai", id: "gpt-b", name: "GPT B" },
+    });
+    const finished = reduceRpcFrame(changed, { type: "agent_end" });
+    expect(running.isStreaming).toBe(true);
+    expect(changed.model).toMatchObject({ provider: "openai", id: "gpt-b" });
+    expect(finished.isStreaming).toBe(false);
+  });
+
+  it("keeps streaming through a non-terminal agent end", () => {
+    const running = reduceRpcFrame(initialConversationState, { type: "agent_start" });
+    const continuing = reduceRpcFrame(running, { type: "agent_end", isTerminal: false });
+    const finished = reduceRpcFrame(continuing, { type: "agent_end", isTerminal: true });
+
+    expect(continuing.isStreaming).toBe(true);
+    expect(finished.isStreaming).toBe(false);
+  });
+
   it("tracks tool execution lifecycle", () => {
     const started = reduceRpcFrame(initialConversationState, {
       type: "tool_execution_start",

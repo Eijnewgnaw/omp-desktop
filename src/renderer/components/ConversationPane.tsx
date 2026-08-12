@@ -13,7 +13,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { RuntimeDescriptor, SessionSummary } from "../../shared/contracts";
+import type { OmpModelInfo, RuntimeDescriptor, SessionSummary } from "../../shared/contracts";
 import type { ConversationState } from "../conversation";
 import { BrandMark } from "./BrandMark";
 import { ToolCard } from "./ToolCard";
@@ -23,13 +23,19 @@ interface ConversationPaneProps {
   workspace?: string;
   runtime?: RuntimeDescriptor;
   conversation: ConversationState;
-  editorFill?: { key: string; text: string };
+  editorUpdate?: { key: string; messages: string[]; force?: boolean };
   sending: boolean;
+  availableModels: OmpModelInfo[];
   onSubmit(message: string): Promise<void>;
   onStop(): void;
   onChooseWorkspace(): void;
   onOpenTerminal(): void;
+  onSelectModel(model: OmpModelInfo): void;
   onRefresh(): void;
+}
+
+function modelKey(model: { provider?: string; id?: string }): string {
+  return JSON.stringify([model.provider ?? "", model.id ?? ""]);
 }
 
 const stateLabels: Record<string, string> = {
@@ -93,26 +99,61 @@ function Message({ role, text, thinking, error }: ConversationState["messages"][
 }
 
 export function ConversationPane(props: ConversationPaneProps): React.JSX.Element {
-  const [draft, setDraft] = useState("");
+  const [editor, setEditor] = useState<{ draft: string; retryDrafts: string[] }>({ draft: "", retryDrafts: [] });
+  const { draft, retryDrafts } = editor;
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const running = ["starting", "running", "aborting"].includes(props.runtime?.state ?? "");
+  const currentModel = typeof props.conversation.model?.provider === "string" && typeof props.conversation.model.id === "string"
+    ? props.conversation.model as OmpModelInfo
+    : undefined;
+  const visibleModels = currentModel
+    && !props.availableModels.some(model => modelKey(model) === modelKey(currentModel))
+    ? [currentModel, ...props.availableModels]
+    : props.availableModels;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [props.conversation.messages, props.conversation.tools]);
 
   useEffect(() => {
-    if (!props.editorFill) return;
-    setDraft(props.editorFill.text);
+    if (!props.editorUpdate) return;
+    const messages = [...new Set(props.editorUpdate.messages.filter(message => message.trim()))];
+    if (messages.length === 0) return;
+    setEditor(current => {
+      if (props.editorUpdate?.force) {
+        return {
+          draft: messages[0] ?? "",
+          retryDrafts: [...new Set([...current.retryDrafts, ...messages.slice(1)])],
+        };
+      }
+      if (!current.draft.trim()) {
+        return {
+          draft: messages[0] ?? "",
+          retryDrafts: [...new Set([...current.retryDrafts, ...messages.slice(1)])],
+        };
+      }
+      return {
+        ...current,
+        retryDrafts: [...new Set([
+          ...current.retryDrafts,
+          ...messages.filter(message => message !== current.draft),
+        ])],
+      };
+    });
     textareaRef.current?.focus();
-  }, [props.editorFill]);
+  }, [props.editorUpdate]);
 
   const submit = async (): Promise<void> => {
     const message = draft.trim();
     if (!message || props.sending) return;
-    setDraft("");
-    await props.onSubmit(message).catch(() => setDraft(message));
+    setEditor(current => ({
+      draft: "",
+      retryDrafts: current.retryDrafts.filter(candidate => candidate !== message),
+    }));
+    await props.onSubmit(message).catch(() => setEditor(current => current.draft.trim()
+      ? { ...current, retryDrafts: [...new Set([...current.retryDrafts, message])] }
+      : { ...current, draft: message }));
     textareaRef.current?.focus();
   };
 
@@ -127,12 +168,38 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
           </div>
         </div>
         <div className="conversation-actions no-drag">
-          {props.conversation.model && (
+          {currentModel && visibleModels.length > 0 ? (
+            <label className="header-chip model-select" title="选择 OMP 模型">
+              <Gauge size={14} />
+              <select
+                aria-label="选择 OMP 模型"
+                disabled={running}
+                value={modelKey(currentModel)}
+                onChange={event => {
+                  const model = visibleModels.find(candidate => modelKey(candidate) === event.target.value);
+                  if (model) props.onSelectModel(model);
+                }}
+              >
+                {visibleModels.map(model => (
+                  <option key={modelKey(model)} value={modelKey(model)}>
+                    {model.name || model.id} · {model.provider}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : props.conversation.model ? (
             <span className="header-chip"><Gauge size={14} />{props.conversation.model.name || props.conversation.model.id}</span>
-          )}
+          ) : null}
           {props.conversation.thinkingLevel && <span className="header-chip">{props.conversation.thinkingLevel}</span>}
           <button className="icon-button" onClick={props.onRefresh} title="刷新会话"><RefreshCw size={16} /></button>
-          <button className="icon-button" onClick={props.onOpenTerminal} title="在原始 OMP 终端中打开"><TerminalSquare size={17} /></button>
+          <button
+            className="icon-button"
+            disabled={props.sending || running}
+            onClick={props.onOpenTerminal}
+            title="在原始 OMP 终端中打开"
+          >
+            <TerminalSquare size={17} />
+          </button>
         </div>
       </header>
 
@@ -171,6 +238,23 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
       </div>
 
       <div className="composer-area">
+        {retryDrafts.length > 0 && (
+          <div className="retry-drafts" role="status">
+            <span>{retryDrafts.length} 条未发送消息已保留</span>
+            <button
+              onClick={() => setEditor(current => {
+                const [next, ...remaining] = current.retryDrafts;
+                if (!next) return current;
+                const retryQueue = current.draft.trim() && current.draft !== next
+                  ? [...remaining, current.draft]
+                  : remaining;
+                return { draft: next, retryDrafts: [...new Set(retryQueue)] };
+              })}
+            >
+              恢复
+            </button>
+          </div>
+        )}
         {props.runtime && (
           <div className={`runtime-banner runtime-banner--${props.runtime.state}`}>
             <span className={running ? "pulse-dot" : "status-dot"} />
@@ -186,7 +270,7 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
             disabled={!props.workspace || props.sending}
             placeholder={props.workspace ? "让 OMP 处理一个任务…" : "请先选择工作区"}
             rows={1}
-            onChange={event => setDraft(event.target.value)}
+            onChange={event => setEditor(current => ({ ...current, draft: event.target.value }))}
             onKeyDown={event => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
