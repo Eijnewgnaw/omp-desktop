@@ -29,12 +29,14 @@ const input = {
 };
 
 describe("OMP terminal launcher", () => {
-  it("builds a Windows Terminal new-tab command without a standalone separator", () => {
+  it("builds a visible new Windows Terminal window without a standalone separator", () => {
     const launch = buildOmpTerminalLaunch(input, "win32");
 
     expect(launch).toEqual({
       command: "wt.exe",
       args: [
+        "-w",
+        "new",
         "new-tab",
         "wsl.exe",
         "-d",
@@ -52,12 +54,12 @@ describe("OMP terminal launcher", () => {
       ],
       options: {
         detached: true,
-        windowsHide: true,
         stdio: "ignore",
       },
       displayName: "Windows Terminal",
     });
     expect(launch.args).not.toContain("--");
+    expect(launch.options.windowsHide).not.toBe(true);
   });
 
   it("escapes a semicolon-only OMP profile for the Windows Terminal parser", () => {

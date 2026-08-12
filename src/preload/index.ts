@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   AppSettings,
+  DeleteSessionInput,
+  DeleteSessionResult,
   EnvironmentInfo,
   OmpDesktopApi,
   OpenTerminalInput,
@@ -23,9 +25,10 @@ const api: OmpDesktopApi = {
   },
   sessions: {
     list: input => ipcRenderer.invoke("sessions:list", input) as Promise<SessionSummary[]>,
-    update: (path: string, patch: SessionMetadataPatch) =>
-      ipcRenderer.invoke("sessions:update", path, patch) as Promise<SessionSummary>,
+    update: (input, patch: SessionMetadataPatch) =>
+      ipcRenderer.invoke("sessions:update", input, patch) as Promise<SessionSummary>,
     trash: (input: TrashSessionInput) => ipcRenderer.invoke("sessions:trash", input) as Promise<TrashSessionResult>,
+    delete: (input: DeleteSessionInput) => ipcRenderer.invoke("sessions:delete", input) as Promise<DeleteSessionResult>,
   },
   theme: {
     get: input => ipcRenderer.invoke("theme:get", input) as Promise<ThemeSnapshot>,

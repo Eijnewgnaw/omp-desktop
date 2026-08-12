@@ -37,7 +37,19 @@ OMP 仍负责模型目录、模型切换、系统提示、扩展、工具、权�
 
 ## Session model
 
-会话索引只读取每个 JSONL 文件开头的固定标题槽和 session header。App 不重写 OMP 会话内容；置顶、归档、显示标题和标签属于独立 SQLite 元数据，可在不影响 OMP 的情况下删除或重建。App 持续跟踪 OMP 实际发布的 session path；终端交接和回收操作必须先严格验证拥有该文件的受管进程已经退出。用户确认“移到回收站”后，App 只会把已索引的 JSONL 及同名附件目录移动到 agent 目录内的 `trash/omp-desktop`，并拒绝越出 sessions 根目录的路径。
+Renderer 只维护一个会话目标：未启动的新会话，或已保存的 OMP 会话。新会话不会继承上一个目录；用户先创建新会话，再为它选择工作区。已保存会话的工作区来自自己的 JSONL session header，在桌面端不可被全局目录覆盖。OMP 第一次发布 session path 后，该路径会绑定到当前新会话，并在索引刷新时提升为已保存会话。
+
+会话索引只读取每个 JSONL 文件开头的固定标题槽和 session header。App 不重写 OMP 会话内容；置顶、归档、显示标题和标签属于独立 SQLite 元数据，可在不影响 OMP 的情况下删除或重建。App 持续跟踪 OMP 实际发布的 session path；终端交接、回收和永久删除必须先严格验证拥有该文件的受管进程已经退出。
+
+- “移到回收站”只会把已索引 JSONL 及同名附件目录移动到 agent 目录内的 `trash/omp-desktop`。
+- “彻底删除”经过独立的文字确认，并先把精确目标原子移动到 agent 目录内的私有 staging 目录，再删除 staging；路径、索引、文件类型和附件目录都会重新验证。
+- 两种操作都拒绝越出 sessions 根目录的路径，不会使用通配符或递归删除会话根目录。
+
+把会话交给原始终端后，App 会持久保存 handoff lease。该 JSONL 在用户明确确认终端中的 OMP 已关闭前不能被桌面 RPC 再次恢复，避免两个 writer 同时写入。
+
+## Runtime backends
+
+当前 Alpha 的发布后端是 WSL2。后续 Windows 原生 OMP 支持会作为独立 adapter 加入：Windows adapter 直接调用 `omp.exe` 并使用 Win32 路径，WSL adapter 继续通过指定发行版调用 POSIX 路径。保存的会话必须绑定其原 adapter、安装目标和工作区，不会在 `C:\...` 与 `/mnt/c/...` 之间隐式迁移。
 
 ## Theme model
 

@@ -45,6 +45,26 @@ const models = [
   selectedModel,
   { provider: "fake-provider", id: "fake-model-b", name: "Fake Model B", reasoning: false },
 ];
+const historicalMessages = process.env.FAKE_OMP_LONG_HISTORY === "1"
+  ? [
+      { role: "user", timestamp: 1, content: "Historical question" },
+      ...Array.from({ length: 48 }, (_, index) => ({
+        role: index % 2 === 0 ? "assistant" : "user",
+        timestamp: index + 2,
+        content: index % 2 === 0
+          ? [{
+              type: "text",
+              text: `Long history response ${index + 1}. This fixture deliberately occupies several lines so the conversation pane must scroll without pushing the composer outside the window.`,
+            }]
+          : `Long history question ${index + 1}. Keep the selected workspace and the input composer visible while this history is rendered.`,
+      })),
+      { role: "assistant", timestamp: 1000, content: [{ type: "text", text: "Historical answer" }] },
+    ]
+  : [
+      { role: "user", timestamp: 1, content: "Historical question" },
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "Historical answer" }] },
+    ];
+const continuationDelayMs = Number(process.env.FAKE_OMP_CONTINUATION_DELAY_MS ?? 500);
 
 if (!resumePath) {
   await fs.mkdir(path.dirname(sessionPath), { recursive: true });
@@ -102,10 +122,7 @@ for await (const line of lineReader) {
         command: command.type,
         success: true,
         data: {
-          messages: [
-            { role: "user", timestamp: 1, content: "Historical question" },
-            { role: "assistant", timestamp: 2, content: [{ type: "text", text: "Historical answer" }] },
-          ],
+          messages: historicalMessages,
         },
       });
       break;
@@ -146,7 +163,7 @@ for await (const line of lineReader) {
             message: { role: "assistant", content: [{ type: "text", text: "Continuation stage two" }] },
           });
           send({ type: "agent_end", isTerminal: true });
-        }, 500);
+        }, Number.isFinite(continuationDelayMs) ? continuationDelayMs : 500);
         break;
       }
       if (command.message === "FAKE_PENDING_ONE") break;

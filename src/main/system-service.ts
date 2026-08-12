@@ -66,10 +66,12 @@ export function buildOmpTerminalLaunch(
       .map(escapeWindowsTerminalArgument);
     return {
       command: "wt.exe",
-      args: ["new-tab", ...commandline],
+      // Always create a visible window. Reusing an existing hidden Windows
+      // Terminal server can successfully launch OMP while leaving its tab
+      // inaccessible to the user.
+      args: ["-w", "new", "new-tab", ...commandline],
       options: {
         detached: true,
-        windowsHide: true,
         stdio: "ignore",
       },
       displayName: "Windows Terminal",

@@ -2,6 +2,7 @@ import {
   Archive,
   ArchiveRestore,
   Bot,
+  CircleX,
   FolderOpen,
   MessageSquare,
   MoreHorizontal,
@@ -25,6 +26,9 @@ interface SidebarProps {
   query: string;
   showArchived: boolean;
   workspace?: string;
+  workspaceSelectable: boolean;
+  terminalAvailable: boolean;
+  handedOffPaths: string[];
   switching: boolean;
   onCollapse(): void;
   onQuery(value: string): void;
@@ -35,6 +39,7 @@ interface SidebarProps {
   onPin(session: SessionSummary): void;
   onArchive(session: SessionSummary): void;
   onTrash(session: SessionSummary): void;
+  onDelete(session: SessionSummary): void;
   onOpenTerminal(session?: SessionSummary): void;
   onSettings(): void;
 }
@@ -84,7 +89,7 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
 
   const openMenu = (session: SessionSummary, target: HTMLElement): void => {
     const bounds = target.getBoundingClientRect();
-    const menuHeight = 218;
+    const menuHeight = 286;
     setMenu({
       session,
       top: Math.min(bounds.bottom + 5, window.innerHeight - menuHeight - 8),
@@ -109,7 +114,12 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         <button className="icon-button icon-button--accent" disabled={props.switching} onClick={props.onNew} title="新建会话">
           <Plus size={19} />
         </button>
-        <button className="icon-button" disabled={props.switching} onClick={props.onChooseWorkspace} title="选择工作区">
+        <button
+          className="icon-button"
+          disabled={props.switching || !props.workspaceSelectable}
+          onClick={props.onChooseWorkspace}
+          title={props.workspaceSelectable ? "为新会话选择工作区" : "已保存会话使用自己的工作区"}
+        >
           <FolderOpen size={18} />
         </button>
         <div className="sidebar-spacer" />
@@ -139,11 +149,16 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         <span>Ctrl N</span>
       </button>
 
-      <button className="workspace-picker" onClick={props.onChooseWorkspace} disabled={props.switching}>
+      <button
+        className={`workspace-picker${props.workspaceSelectable ? "" : " workspace-picker--readonly"}`}
+        onClick={props.onChooseWorkspace}
+        disabled={props.switching || !props.workspaceSelectable}
+        title={props.workspaceSelectable ? "为当前新会话选择工作区" : "工作区已绑定到这个会话"}
+      >
         <FolderOpen size={16} />
         <span>
-          <small>当前工作区</small>
-          <strong>{props.workspace || "选择 WSL 目录"}</strong>
+          <small>{props.workspaceSelectable ? "新会话工作区" : "会话工作区"}</small>
+          <strong>{props.workspace || "选择 WSL 目录后开始"}</strong>
         </span>
         <MoreHorizontal size={16} />
       </button>
@@ -182,6 +197,7 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
                   <strong>{session.title}</strong>
                   <small>
                     {session.projectName} · {relativeTime(session.modifiedAt)}
+                    {props.handedOffPaths.includes(session.path) ? " · 原始终端中" : ""}
                   </small>
                   {session.tags.length > 0 && (
                     <span className="tag-line">{session.tags.slice(0, 3).map(tag => <em key={tag}>{tag}</em>)}</span>
@@ -216,7 +232,8 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
           style={{ top: menu.top, left: menu.left }}
         >
           <button role="menuitem" disabled={props.switching} onClick={() => runMenuAction(props.onOpen)}>
-            <MessageSquare size={14} /><span>继续会话</span>
+            <MessageSquare size={14} />
+            <span>{props.handedOffPaths.includes(menu.session.path) ? "重新接管会话…" : "继续会话"}</span>
           </button>
           <button role="menuitem" disabled={props.switching} onClick={() => runMenuAction(session => props.onOpenTerminal(session))}>
             <TerminalSquare size={14} /><span>在原始终端打开</span>
@@ -234,11 +251,23 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
           <button className="session-menu__danger" role="menuitem" disabled={props.switching} onClick={() => runMenuAction(props.onTrash)}>
             <Trash2 size={14} /><span>移到回收站…</span>
           </button>
+          <button
+            className="session-menu__danger session-menu__danger--permanent"
+            role="menuitem"
+            disabled={props.switching}
+            onClick={() => runMenuAction(props.onDelete)}
+          >
+            <CircleX size={14} /><span>彻底删除…</span>
+          </button>
         </div>
       )}
 
       <div className="sidebar-footer">
-        <button disabled={props.switching} onClick={() => props.onOpenTerminal()}>
+        <button
+          disabled={props.switching || !props.terminalAvailable}
+          onClick={() => props.onOpenTerminal()}
+          title={props.terminalAvailable ? "在原始 OMP 终端中打开当前会话" : "先创建或选择一个会话"}
+        >
           <TerminalSquare size={16} />
           原始 OMP 终端
         </button>

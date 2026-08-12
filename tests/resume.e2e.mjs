@@ -8,17 +8,22 @@ await fs.rm(outputDirectory, { recursive: true, force: true });
 const userDataDirectory = path.join(outputDirectory, "user-data");
 const fakeHomeDirectory = path.join(outputDirectory, "fake-home");
 const agentDirectory = path.join(outputDirectory, "agent");
-const workspaceDirectory = path.join(outputDirectory, "workspace");
+const workspaceDirectory = path.join(outputDirectory, "workspace-resumed");
+const newWorkspaceDirectory = path.join(outputDirectory, "workspace-new");
 const sessionBucket = path.join(agentDirectory, "sessions", "fake-project");
 const sessionPath = path.join(sessionBucket, "2026-08-12_fake-session.jsonl");
 const logPath = path.join(outputDirectory, "fake-omp.log.jsonl");
 const terminalLogPath = path.join(outputDirectory, "fake-terminal.log");
 const fakeBinDirectory = path.resolve("tests", "fixtures", "fake-bin");
 const fakeTerminalPath = path.join(fakeBinDirectory, "fake-terminal");
-await fs.mkdir(userDataDirectory, { recursive: true });
-await fs.mkdir(fakeHomeDirectory, { recursive: true });
-await fs.mkdir(sessionBucket, { recursive: true });
-await fs.mkdir(workspaceDirectory, { recursive: true });
+
+await Promise.all([
+  fs.mkdir(userDataDirectory, { recursive: true }),
+  fs.mkdir(fakeHomeDirectory, { recursive: true }),
+  fs.mkdir(sessionBucket, { recursive: true }),
+  fs.mkdir(workspaceDirectory, { recursive: true }),
+  fs.mkdir(newWorkspaceDirectory, { recursive: true }),
+]);
 await fs.writeFile(sessionPath, [
   JSON.stringify({ type: "title", title: "Resumable fixture session" }),
   JSON.stringify({
@@ -30,6 +35,36 @@ await fs.writeFile(sessionPath, [
   }),
   "",
 ].join("\n"));
+
+async function readLogEntries() {
+  try {
+    const contents = (await fs.readFile(logPath, "utf8")).trim();
+    return contents ? contents.split("\n").map(line => JSON.parse(line)) : [];
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function waitForLog(predicate, message, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const entries = await readLogEntries();
+    if (predicate(entries)) return entries;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(message);
+}
+
+async function assertMissing(filePath, message) {
+  try {
+    await fs.access(filePath);
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(message);
+}
 
 const electronPath = process.env.ELECTRON_EXECUTABLE || (await import("electron")).default;
 const app = await electron.launch({
@@ -43,6 +78,8 @@ const app = await electron.launch({
     ELECTRON_DISABLE_SANDBOX: "1",
     FAKE_OMP_AGENT_DIR: agentDirectory,
     FAKE_OMP_LOG: logPath,
+    FAKE_OMP_LONG_HISTORY: "1",
+    FAKE_OMP_CONTINUATION_DELAY_MS: "2000",
     FAKE_TERMINAL_LOG: terminalLogPath,
     TERMINAL: fakeTerminalPath,
   },
@@ -53,11 +90,79 @@ try {
   const page = await app.firstWindow({ timeout: 30_000 });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForSelector(".app-shell", { timeout: 30_000 });
-  const sessionRow = page.getByText("Resumable fixture session", { exact: true }).first();
-  await sessionRow.click();
-  await page.getByText("Historical answer", { exact: true }).waitFor({ timeout: 15_000 });
 
   const composer = page.locator(".composer textarea");
+  const sendButton = page.locator(".send-button");
+  await page.waitForFunction(() => {
+    const textarea = document.querySelector(".composer textarea");
+    return textarea instanceof HTMLTextAreaElement
+      && textarea.disabled
+      && textarea.placeholder === "请先选择工作区";
+  });
+  if (!(await sendButton.isDisabled())) throw new Error("A new session could send before selecting its workspace");
+  if ((await page.locator(".conversation-title small").textContent()) !== "选择一个 WSL 工作区开始") {
+    throw new Error("The initial new session inherited a previous workspace");
+  }
+
+  let sessionRow = page.locator(".session-row").filter({ hasText: "Resumable fixture session" }).first();
+  await sessionRow.locator(".session-row__main").click();
+  await page.getByText("Historical answer", { exact: true }).waitFor({ timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelectorAll(".message").length >= 50);
+
+  const layout = await page.evaluate(() => {
+    const pane = document.querySelector(".conversation-pane")?.getBoundingClientRect();
+    const scroll = document.querySelector(".conversation-scroll");
+    const scrollBounds = scroll?.getBoundingClientRect();
+    const composerBounds = document.querySelector(".composer-area")?.getBoundingClientRect();
+    return {
+      innerHeight: window.innerHeight,
+      paneBottom: pane?.bottom,
+      scrollBottom: scrollBounds?.bottom,
+      composerTop: composerBounds?.top,
+      composerBottom: composerBounds?.bottom,
+      scrollHeight: scroll?.scrollHeight,
+      clientHeight: scroll?.clientHeight,
+    };
+  });
+  if (layout.paneBottom === undefined || layout.paneBottom > layout.innerHeight + 1) {
+    throw new Error(`Conversation pane escaped the viewport: ${JSON.stringify(layout)}`);
+  }
+  if (layout.composerBottom === undefined || layout.composerBottom > layout.innerHeight + 1) {
+    throw new Error(`Composer was pushed below the viewport: ${JSON.stringify(layout)}`);
+  }
+  if (layout.scrollBottom === undefined || layout.composerTop === undefined || layout.scrollBottom > layout.composerTop + 1) {
+    throw new Error(`Conversation scroll area overlapped the composer: ${JSON.stringify(layout)}`);
+  }
+  if ((layout.scrollHeight ?? 0) <= (layout.clientHeight ?? 0)) {
+    throw new Error(`Long history did not create a bounded scroll area: ${JSON.stringify(layout)}`);
+  }
+  const conversationScroll = page.locator(".conversation-scroll");
+  await conversationScroll.evaluate(element => element.scrollTo({ top: 0, behavior: "instant" }));
+  await page.waitForFunction(() => (document.querySelector(".conversation-scroll")?.scrollTop ?? -1) === 0);
+  await conversationScroll.hover();
+  await page.mouse.wheel(0, 700);
+  await page.waitForFunction(() => (document.querySelector(".conversation-scroll")?.scrollTop ?? 0) > 100);
+  await conversationScroll.evaluate(element => element.scrollTo({ top: element.scrollHeight, behavior: "instant" }));
+
+  const refreshButton = page.getByTitle("重新载入当前会话");
+  const logBeforeRefresh = await readLogEntries();
+  const commandCountBeforeRefresh = logBeforeRefresh.filter(entry => entry.event === "command").length;
+  await refreshButton.click();
+  const refreshEntries = await waitForLog(
+    entries => {
+      const commands = entries.slice(logBeforeRefresh.length)
+        .filter(entry => entry.event === "command")
+        .map(entry => entry.command);
+      return ["get_state", "get_messages_page", "get_available_models"]
+        .every(type => commands.some(command => command.type === type && String(command.id).startsWith("refresh-")));
+    },
+    "Refresh did not request state, history, and models",
+  );
+  if (refreshEntries.filter(entry => entry.event === "command").length < commandCountBeforeRefresh + 3) {
+    throw new Error("Refresh did not send all three RPC commands");
+  }
+  await page.getByText("当前会话已请求重新载入", { exact: true }).waitFor({ timeout: 15_000 });
+
   await composer.fill("Continue from desktop");
   await composer.press("Enter");
   await page.getByText("Resumed reply: Continue from desktop", { exact: true }).waitFor({ timeout: 15_000 });
@@ -101,26 +206,40 @@ try {
   await composer.press("Enter");
   await page.getByText("Resumed reply: Keep this newer draft", { exact: true }).waitFor({ timeout: 15_000 });
 
-  const terminalButton = page.getByTitle("在原始 OMP 终端中打开");
+  const terminalButton = page.getByTitle("在原始 OMP 终端中打开", { exact: true });
   await composer.fill("FAKE_CONTINUATION");
   await composer.press("Enter");
   await page.getByText("Continuation stage one", { exact: true }).waitFor({ timeout: 15_000 });
-  if (!(await terminalButton.isDisabled())) throw new Error("Terminal handoff was enabled during a non-terminal continuation");
+  await page.waitForFunction(async () => (await window.ompDesktop.runtime.list())[0]?.state === "running");
+  if (await terminalButton.isDisabled()) throw new Error("Header terminal handoff was disabled while OMP was running");
+  if (await page.locator(".new-session-button").isDisabled()) {
+    throw new Error("New Session was disabled while OMP was running");
+  }
+  sessionRow = page.locator(".session-row").filter({ hasText: "Resumable fixture session" }).first();
+  if (await sessionRow.locator(".session-row__main").isDisabled()) {
+    throw new Error("The active sidebar session was disabled while OMP was running");
+  }
+  const runningMenuButton = sessionRow.locator("[data-session-menu-trigger]");
+  if (await runningMenuButton.isDisabled()) throw new Error("Sidebar session actions were disabled while OMP was running");
+  await runningMenuButton.click();
+  const runningTerminalMenuItem = page.getByRole("menuitem", { name: "在原始终端打开" });
+  await runningTerminalMenuItem.waitFor();
+  if (await runningTerminalMenuItem.isDisabled()) {
+    throw new Error("Sidebar terminal handoff was disabled while OMP was running");
+  }
+  await page.keyboard.press("Escape");
   await page.getByText("Continuation stage two", { exact: true }).waitFor({ timeout: 15_000 });
-  await page.waitForFunction(() => {
-    const button = document.querySelector('button[title="在原始 OMP 终端中打开"]');
-    return button instanceof HTMLButtonElement && !button.disabled;
-  });
 
   await composer.fill("FAKE_LOCAL");
   await composer.press("Enter");
   await page.waitForTimeout(100);
 
-  const menuButton = page.locator("[data-session-menu-trigger]").first();
+  const menuButton = sessionRow.locator("[data-session-menu-trigger]");
   await menuButton.click();
   await page.getByRole("menuitem", { name: "继续会话" }).waitFor();
   await page.getByRole("menuitem", { name: "在原始终端打开" }).waitFor();
   await page.getByRole("menuitem", { name: "移到回收站…" }).waitFor();
+  await page.getByRole("menuitem", { name: "彻底删除…" }).waitFor();
   const screenshot = path.join(outputDirectory, "resume-session-controls.png");
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.getByRole("menuitem", { name: "移到回收站…" }).click();
@@ -160,66 +279,105 @@ try {
   if (resumeIndex < 0 || terminalArgs[resumeIndex + 1] !== sessionPath) {
     throw new Error(`Original terminal did not receive the selected resume path: ${JSON.stringify(terminalArgs)}`);
   }
-  await page.getByText("新会话", { exact: true }).waitFor();
-  await composer.fill("After terminal handoff");
-  await composer.press("Enter");
-  await page.getByText("Resumed reply: After terminal handoff", { exact: true }).waitFor({ timeout: 15_000 });
+  await page.getByText("会话已交给原始 OMP 终端；桌面端已切换到新会话", { exact: true }).waitFor({ timeout: 15_000 });
+  await page.waitForFunction(() => {
+    const title = document.querySelector(".conversation-title strong");
+    const cwd = document.querySelector(".conversation-title small");
+    const textarea = document.querySelector(".composer textarea");
+    return title?.textContent === "OMP Desktop"
+      && cwd?.textContent === "选择一个 WSL 工作区开始"
+      && textarea instanceof HTMLTextAreaElement
+      && textarea.disabled
+      && textarea.placeholder === "请先选择工作区";
+  });
+  if (!(await sendButton.isDisabled())) throw new Error("Terminal handoff left the new-session composer sendable");
 
-  await page.getByText("Fresh fixture session", { exact: true }).waitFor({ timeout: 15_000 });
-  let ownershipLogEntries = (await fs.readFile(logPath, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-  const trashOwnedStart = ownershipLogEntries.filter(entry => entry.event === "start").at(-1);
-  const trashOwnedPath = trashOwnedStart?.effectiveSessionPath;
-  if (trashOwnedStart?.sessionPath !== undefined || typeof trashOwnedPath !== "string") {
-    throw new Error("Fresh desktop runtime did not publish its owned session path");
+  sessionRow = page.locator(".session-row").filter({ hasText: "Resumable fixture session" }).first();
+  await sessionRow.getByText("原始终端中", { exact: false }).waitFor({ timeout: 15_000 });
+  await sessionRow.locator(".session-row__main").click();
+  const reclaimDialog = page.getByRole("dialog", { name: "重新接管这个会话？" });
+  await reclaimDialog.waitFor({ timeout: 15_000 });
+  await reclaimDialog.getByRole("button", { name: "取消" }).click();
+  await reclaimDialog.waitFor({ state: "hidden" });
+  if ((await page.evaluate(() => window.ompDesktop.runtime.list())).length !== 0) {
+    throw new Error("Canceling session reclaim unexpectedly started a desktop runtime");
   }
+
+  await app.evaluate(({ dialog }, filePaths) => {
+    dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths });
+  }, [newWorkspaceDirectory]);
+  const startCountBeforeWorkspaceSelection = (await readLogEntries()).filter(entry => entry.event === "start").length;
+  const workspacePicker = page.locator(".workspace-picker");
+  if (await workspacePicker.isDisabled()) throw new Error("Fresh session workspace picker was disabled");
+  await workspacePicker.click();
+  await page.waitForFunction(expected => {
+    const title = document.querySelector(".conversation-title strong");
+    const cwd = document.querySelector(".conversation-title small");
+    const textarea = document.querySelector(".composer textarea");
+    return title?.textContent === "新会话"
+      && cwd?.textContent === expected
+      && textarea instanceof HTMLTextAreaElement
+      && !textarea.disabled;
+  }, newWorkspaceDirectory);
+  if ((await readLogEntries()).filter(entry => entry.event === "start").length !== startCountBeforeWorkspaceSelection) {
+    throw new Error("Selecting a workspace started OMP before the first prompt");
+  }
+
+  await composer.fill("Create session in selected workspace");
+  await composer.press("Enter");
+  await page.getByText("Resumed reply: Create session in selected workspace", { exact: true }).waitFor({ timeout: 15_000 });
+  const entriesAfterFreshStart = await waitForLog(
+    entries => entries.filter(entry => entry.event === "start").length > startCountBeforeWorkspaceSelection,
+    "Selecting a workspace and sending the first prompt did not start OMP",
+  );
+  const freshStart = entriesAfterFreshStart.filter(entry => entry.event === "start").at(-1);
+  const freshSessionPath = freshStart?.effectiveSessionPath;
+  if (freshStart?.cwd !== newWorkspaceDirectory) {
+    throw new Error(`Fresh session started in the wrong workspace: ${JSON.stringify(freshStart)}`);
+  }
+  if (freshStart?.sessionPath !== undefined) {
+    throw new Error(`Fresh session unexpectedly resumed an older JSONL: ${JSON.stringify(freshStart)}`);
+  }
+  if (typeof freshSessionPath !== "string") throw new Error("Fresh runtime did not publish its session path");
+
   let freshRow = page.locator(".session-row").filter({ hasText: "Fresh fixture session" }).first();
+  await freshRow.waitFor({ timeout: 15_000 });
   await freshRow.locator("[data-session-menu-trigger]").click();
+  await page.getByRole("menuitem", { name: "移到回收站…" }).waitFor();
+  await page.getByRole("menuitem", { name: "彻底删除…" }).waitFor();
   await page.getByRole("menuitem", { name: "移到回收站…" }).click();
-  await page.getByRole("button", { name: "移到回收站", exact: true }).click();
-  await page.waitForFunction(async () => (await window.ompDesktop.runtime.list()).length === 0);
-  await page.getByText("会话已移到可恢复回收站", { exact: true }).waitFor({ timeout: 15_000 });
-  try {
-    await fs.access(trashOwnedPath);
-    throw new Error("Fresh session file was not moved after its runtime stopped");
-  } catch (error) {
-    if (error instanceof Error && error.message === "Fresh session file was not moved after its runtime stopped") throw error;
-  }
+  await page.getByRole("dialog", { name: "将会话移到回收站？" }).waitFor();
+  await page.getByRole("button", { name: "取消" }).click();
 
-  await composer.fill("Fresh session terminal ownership");
-  await composer.press("Enter");
-  await page.getByText("Resumed reply: Fresh session terminal ownership", { exact: true }).waitFor({ timeout: 15_000 });
-  await page.getByText("Fresh fixture session", { exact: true }).waitFor({ timeout: 15_000 });
-  ownershipLogEntries = (await fs.readFile(logPath, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-  const terminalOwnedStart = ownershipLogEntries.filter(entry => entry.event === "start").at(-1);
-  const terminalOwnedPath = terminalOwnedStart?.effectiveSessionPath;
-  if (terminalOwnedStart?.sessionPath !== undefined || typeof terminalOwnedPath !== "string") {
-    throw new Error("Second fresh desktop runtime did not publish its owned session path");
-  }
   freshRow = page.locator(".session-row").filter({ hasText: "Fresh fixture session" }).first();
   await freshRow.locator("[data-session-menu-trigger]").click();
-  await page.getByRole("menuitem", { name: "在原始终端打开" }).click();
-  await page.waitForFunction(async () => (await window.ompDesktop.runtime.list()).length === 0);
-  const freshTerminalDeadline = Date.now() + 15_000;
-  let freshTerminalLog = "";
-  while (Date.now() < freshTerminalDeadline) {
-    try {
-      freshTerminalLog = await fs.readFile(terminalLogPath, "utf8");
-      if (freshTerminalLog.includes(`--resume\n${terminalOwnedPath}\n`)) break;
-    } catch {
-      // The detached launcher may still be replacing its previous log.
-    }
-    await page.waitForTimeout(50);
+  await page.getByRole("menuitem", { name: "彻底删除…" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "彻底删除这个会话？" });
+  await deleteDialog.waitFor();
+  const permanentDeleteButton = deleteDialog.getByRole("button", { name: "彻底删除", exact: true });
+  if (!(await permanentDeleteButton.isDisabled())) {
+    throw new Error("Permanent delete was enabled before typing its confirmation phrase");
   }
-  if (!freshTerminalLog.includes(`--resume\n${terminalOwnedPath}\n`)) {
-    throw new Error("Fresh runtime ownership was not handed to the original terminal");
+  await deleteDialog.locator("input").fill("永久删除");
+  if (await permanentDeleteButton.isDisabled()) {
+    throw new Error("Permanent delete stayed disabled after typing its confirmation phrase");
   }
+  await permanentDeleteButton.click();
+  await page.getByText("会话及其附件已彻底删除", { exact: true }).waitFor({ timeout: 15_000 });
+  await freshRow.waitFor({ state: "detached", timeout: 15_000 });
+  await assertMissing(freshSessionPath, "Permanent delete left the temporary fake session on disk");
+  await fs.access(sessionPath);
+  await page.waitForFunction(() => {
+    const cwd = document.querySelector(".conversation-title small");
+    const textarea = document.querySelector(".composer textarea");
+    return cwd?.textContent === "选择一个 WSL 工作区开始"
+      && textarea instanceof HTMLTextAreaElement
+      && textarea.disabled;
+  });
 
-  const logEntries = (await fs.readFile(logPath, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  const logEntries = await readLogEntries();
   const starts = logEntries.filter(entry => entry.event === "start");
   if (starts[0]?.sessionPath !== sessionPath) throw new Error("Fake OMP did not receive the selected resume path");
-  if (starts.at(-1)?.sessionPath !== undefined) {
-    throw new Error("Desktop implicitly reclaimed the handed-off session instead of starting fresh");
-  }
   const commands = logEntries.filter(entry => entry.event === "command").map(entry => entry.command);
   if (!commands.some(command => command.type === "prompt" && command.message === "Continue from desktop")) {
     throw new Error("Resumed prompt did not reach OMP RPC");
@@ -227,8 +385,12 @@ try {
   if (!commands.some(command => command.type === "set_model" && command.modelId === "fake-model-b")) {
     throw new Error("Model selection did not reach OMP RPC");
   }
+
   process.stdout.write(`${JSON.stringify({
     resumed: true,
+    boundedLongHistoryScroll: true,
+    refreshReloadsRuntime: true,
+    runningControlsAvailable: true,
     modelSelection: true,
     promptErrorRestored: true,
     newerDraftPreserved: true,
@@ -237,9 +399,11 @@ try {
     promptResultHandled: true,
     reconnectAfterExit: true,
     terminalHandoff: true,
-    handoffStartsFresh: true,
-    newSessionTrashOwnership: true,
-    newSessionTerminalOwnership: true,
+    handoffStartsWorkspaceLess: true,
+    handoffLeaseRequiresReclaim: true,
+    perSessionWorkspace: true,
+    trashAndPermanentDeleteVisible: true,
+    permanentDeleteConfirmed: true,
     screenshot,
   })}\n`);
 } finally {

@@ -60,6 +60,17 @@ export interface TrashSessionResult {
   artifactTrashPath?: string;
 }
 
+export interface DeleteSessionInput {
+  distro: string;
+  installationPath: string;
+  path: string;
+}
+
+export interface DeleteSessionResult {
+  deletedPath: string;
+  deletedArtifactPath?: string;
+}
+
 export interface OmpModelInfo {
   provider: string;
   id: string;
@@ -145,6 +156,15 @@ export interface AppSettings {
   lastWorkspace?: string;
   themeMode: "system" | "dark" | "light";
   profile?: string;
+  handedOffSessions?: SessionHandoff[];
+}
+
+export interface SessionHandoff {
+  distro: string;
+  installationPath: string;
+  sessionPath: string;
+  cwd: string;
+  handedOffAt: string;
 }
 
 export interface OpenTerminalInput extends WorkspaceInput {
@@ -159,8 +179,12 @@ export interface OmpDesktopApi {
   };
   sessions: {
     list(input: { distro: string; installationPath: string; includeArchived?: boolean }): Promise<SessionSummary[]>;
-    update(path: string, patch: SessionMetadataPatch): Promise<SessionSummary>;
+    update(
+      input: { distro: string; installationPath: string; path: string },
+      patch: SessionMetadataPatch,
+    ): Promise<SessionSummary>;
     trash(input: TrashSessionInput): Promise<TrashSessionResult>;
+    delete(input: DeleteSessionInput): Promise<DeleteSessionResult>;
   };
   theme: {
     get(input: { distro: string; installationPath: string; mode: "dark" | "light" }): Promise<ThemeSnapshot>;

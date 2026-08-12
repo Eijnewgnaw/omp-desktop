@@ -1,6 +1,6 @@
 {
   "name": "omp-desktop",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "private": true,
   "description": "An unofficial Windows and WSL desktop client for Oh My Pi",
   "license": "MIT",

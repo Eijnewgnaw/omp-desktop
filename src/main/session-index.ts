@@ -1,7 +1,13 @@
 import fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import path from "node:path";
-import type { OmpInstallation, SessionSummary, TrashSessionResult } from "../shared/contracts";
+import type {
+  DeleteSessionResult,
+  OmpInstallation,
+  SessionMetadataPatch,
+  SessionSummary,
+  TrashSessionResult,
+} from "../shared/contracts";
 import { MetadataStore } from "./metadata-store";
 import { wslPathToHostPath } from "./security";
 
@@ -76,10 +82,29 @@ function containedRelativePath(root: string, candidate: string): string {
 
 export class SessionIndex {
   readonly #store: MetadataStore;
-  readonly #cache = new Map<string, SessionSummary>();
+  readonly #caches = new Map<string, Map<string, SessionSummary>>();
 
   constructor(store: MetadataStore) {
     this.#store = store;
+  }
+
+  #installationKey(installation: OmpInstallation): string {
+    return JSON.stringify([
+      installation.direct ? "direct" : "wsl",
+      installation.distro,
+      installation.executablePath,
+      installation.agentDir,
+    ]);
+  }
+
+  #cacheFor(installation: OmpInstallation): Map<string, SessionSummary> {
+    const key = this.#installationKey(installation);
+    let cache = this.#caches.get(key);
+    if (!cache) {
+      cache = new Map<string, SessionSummary>();
+      this.#caches.set(key, cache);
+    }
+    return cache;
   }
 
   async list(installation: OmpInstallation, includeArchived = false): Promise<SessionSummary[]> {
@@ -91,7 +116,7 @@ export class SessionIndex {
     const sessionPathFor = (hostFile: string): string => installation.direct
       ? hostFile
       : toWslPath(hostRoot, wslRoot, hostFile);
-    const metadata = this.#store.getSessionMetadata(files.map(sessionPathFor));
+    const metadata = this.#store.getSessionMetadata(this.#installationKey(installation), files.map(sessionPathFor));
     const summaries = (
       await Promise.all(
         files.map(async hostFile => {
@@ -126,18 +151,24 @@ export class SessionIndex {
         }),
       )
     ).filter((summary): summary is SessionSummary => summary !== null);
-    this.#cache.clear();
-    for (const summary of summaries) this.#cache.set(summary.path, summary);
+    const cache = this.#cacheFor(installation);
+    cache.clear();
+    for (const summary of summaries) cache.set(summary.path, summary);
     return summaries
       .filter(summary => includeArchived || !summary.archived)
       .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.modifiedAt.localeCompare(left.modifiedAt));
   }
 
-  update(pathValue: string, patch: Parameters<MetadataStore["updateSession"]>[1]): SessionSummary {
-    const existing = this.#cache.get(pathValue);
+  update(
+    installation: OmpInstallation,
+    pathValue: string,
+    patch: SessionMetadataPatch,
+  ): SessionSummary {
+    const cache = this.#cacheFor(installation);
+    const existing = cache.get(pathValue);
     if (!existing) throw new Error("Session must be indexed before it can be updated");
-    const updated = this.#store.updateSession(existing, patch);
-    this.#cache.set(pathValue, updated);
+    const updated = this.#store.updateSession(this.#installationKey(installation), existing, patch);
+    cache.set(pathValue, updated);
     return updated;
   }
 
@@ -153,8 +184,9 @@ export class SessionIndex {
     if (path.extname(sourceHostPath).toLowerCase() !== ".jsonl") {
       throw new Error("Only indexed OMP JSONL sessions can be moved to Trash");
     }
-    if (!this.#cache.has(sessionPath)) throw new Error("Session must be indexed before it can be moved to Trash");
-    const sourceStat = await fs.stat(sourceHostPath).catch(() => undefined);
+    const cache = this.#cacheFor(installation);
+    if (!cache.has(sessionPath)) throw new Error("Session must be indexed before it can be moved to Trash");
+    const sourceStat = await fs.lstat(sourceHostPath).catch(() => undefined);
     if (!sourceStat?.isFile()) throw new Error("OMP session file no longer exists");
 
     const trashWslRoot = path.posix.join(installation.agentDir, "trash", "omp-desktop");
@@ -183,7 +215,7 @@ export class SessionIndex {
       }
       throw error;
     }
-    this.#cache.delete(sessionPath);
+    cache.delete(sessionPath);
 
     const relativeWsl = relative.split(path.sep).join("/");
     const trashPath = installation.direct
@@ -193,6 +225,61 @@ export class SessionIndex {
       originalPath: sessionPath,
       trashPath,
       artifactTrashPath: hasArtifacts ? trashPath.slice(0, -".jsonl".length) : undefined,
+    };
+  }
+
+  async deletePermanently(installation: OmpInstallation, sessionPath: string): Promise<DeleteSessionResult> {
+    const sessionsWslRoot = path.posix.join(installation.agentDir, "sessions");
+    const sessionsHostRoot = installation.direct
+      ? path.resolve(installation.agentDir, "sessions")
+      : wslPathToHostPath(installation.distro, sessionsWslRoot);
+    const sourceHostPath = installation.direct
+      ? path.resolve(sessionPath)
+      : wslPathToHostPath(installation.distro, sessionPath);
+    const relative = containedRelativePath(sessionsHostRoot, sourceHostPath);
+    if (path.extname(sourceHostPath).toLowerCase() !== ".jsonl") {
+      throw new Error("Only indexed OMP JSONL sessions can be permanently deleted");
+    }
+    const cache = this.#cacheFor(installation);
+    if (!cache.has(sessionPath)) {
+      throw new Error("Session must be indexed before it can be permanently deleted");
+    }
+    const sourceStat = await fs.lstat(sourceHostPath).catch(() => undefined);
+    if (!sourceStat?.isFile()) throw new Error("OMP session file no longer exists");
+
+    const sourceArtifactPath = sourceHostPath.slice(0, -".jsonl".length);
+    const artifactStat = await fs.lstat(sourceArtifactPath).catch(() => undefined);
+    const hasArtifacts = artifactStat?.isDirectory() ?? false;
+    if (artifactStat && !hasArtifacts) {
+      throw new Error("OMP session artifacts must be a directory before they can be permanently deleted");
+    }
+
+    const agentHostRoot = installation.direct
+      ? path.resolve(installation.agentDir)
+      : wslPathToHostPath(installation.distro, installation.agentDir);
+    const stagingRoot = path.join(agentHostRoot, ".omp-desktop-delete-staging", crypto.randomUUID());
+    const stagedSessionPath = path.join(stagingRoot, relative);
+    const stagedArtifactPath = stagedSessionPath.slice(0, -".jsonl".length);
+    await fs.mkdir(path.dirname(stagedSessionPath), { recursive: true });
+    await fs.rename(sourceHostPath, stagedSessionPath);
+    try {
+      if (hasArtifacts) await fs.rename(sourceArtifactPath, stagedArtifactPath);
+    } catch (error) {
+      try {
+        await fs.rename(stagedSessionPath, sourceHostPath);
+        await fs.rm(stagingRoot, { recursive: true, force: true });
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "Failed to stage OMP artifacts and restore the session file");
+      }
+      throw error;
+    }
+
+    await fs.rm(stagingRoot, { recursive: true, force: false });
+    cache.delete(sessionPath);
+    this.#store.deleteSession(this.#installationKey(installation), sessionPath);
+    return {
+      deletedPath: sessionPath,
+      deletedArtifactPath: hasArtifacts ? sessionPath.slice(0, -".jsonl".length) : undefined,
     };
   }
 }
