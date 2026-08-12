@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
+import { dialog } from "electron";
 import { describe, expect, it, vi } from "vitest";
 import type { OmpInstallation } from "../src/shared/contracts";
 
@@ -9,6 +10,8 @@ vi.mock("electron", () => ({
 
 import {
   buildOmpTerminalLaunch,
+  chooseWorkspace,
+  MACOS_TERMINAL_SCRIPT,
   spawnDetachedTerminal,
   type TerminalLaunch,
 } from "../src/main/system-service";
@@ -48,6 +51,15 @@ const directInstallation: OmpInstallation = {
   agentDir: "/home/me/.omp/agent",
 };
 
+const macosInstallation: OmpInstallation = {
+  id: "macos-native:omp",
+  kind: "macos-native",
+  label: "macOS (native)",
+  executablePath: "/opt/homebrew/bin/omp",
+  version: "17.2.12",
+  agentDir: "/Users/me/.omp/agent",
+};
+
 const wslInput = {
   installationId: wslInstallation.id,
   path: "/home/me/My Project;still-one-argument",
@@ -55,6 +67,18 @@ const wslInput = {
 };
 
 describe("OMP terminal launcher", () => {
+  it("opens the macOS workspace chooser in the user home directory", async () => {
+    const showOpenDialog = vi.mocked(dialog.showOpenDialog);
+    showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] });
+
+    await expect(chooseWorkspace(macosInstallation)).resolves.toBeNull();
+    expect(showOpenDialog).toHaveBeenCalledWith(expect.objectContaining({
+      title: "选择 OMP 工作区",
+      defaultPath: process.env.HOME,
+      properties: ["openDirectory", "createDirectory"],
+    }));
+  });
+
   it("builds a visible new Windows Terminal window without a standalone separator", () => {
     const launch = buildOmpTerminalLaunch(wslInstallation, wslInput, "win32");
 
@@ -189,6 +213,38 @@ describe("OMP terminal launcher", () => {
       "--resume",
       "/home/me/.omp-work/agent/sessions/project/old.jsonl",
     ]);
+  });
+
+  it("passes macOS Terminal values as separate argv to a fixed AppleScript", () => {
+    const workspace = "/Users/me/Project; say hacked";
+    const sessionPath = "/Users/me/.omp/agent/sessions/old session.jsonl";
+    const launch = buildOmpTerminalLaunch(
+      macosInstallation,
+      { installationId: macosInstallation.id, path: workspace, sessionPath },
+      "darwin",
+    );
+
+    expect(launch).toEqual({
+      command: "/usr/bin/osascript",
+      args: [
+        "-e",
+        MACOS_TERMINAL_SCRIPT,
+        "--",
+        workspace,
+        "/opt/homebrew/bin/omp",
+        "--profile",
+        "default",
+        "--cwd",
+        workspace,
+        "--resume",
+        sessionPath,
+      ],
+      options: { detached: true, stdio: "ignore" },
+      displayName: "macOS Terminal",
+    });
+    expect(MACOS_TERMINAL_SCRIPT).not.toContain(workspace);
+    expect(MACOS_TERMINAL_SCRIPT).not.toContain(sessionPath);
+    expect(MACOS_TERMINAL_SCRIPT).toContain("quoted form");
   });
 
   it("builds a Linux terminal command with argv boundaries and the normalized working directory", () => {

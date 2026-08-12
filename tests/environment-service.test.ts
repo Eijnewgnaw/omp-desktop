@@ -6,8 +6,10 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileAsync } from "../src/main/exec";
 import {
+  detectMacosEnvironment,
   detectWindowsEnvironment,
   dataDirFromGcPlan,
+  macosNativeCandidatePaths,
   POSIX_PROFILE_DISCOVERY_SCRIPT,
   WINDOWS_PROFILE_DISCOVERY_SCRIPT,
   windowsNativeCandidatePaths,
@@ -618,5 +620,70 @@ describe("OMP environment discovery", () => {
       && argv.join("|").includes("--exec|/usr/bin/omp|--profile|team|config|path"))).toBe(true);
     expect(calls.flatMap(call => call.argv)).not.toContain("bad/name");
     expect(calls.flatMap(call => call.argv)).not.toContain("invalid profile");
+  });
+
+  it("builds deterministic macOS candidates and treats an explicit executable as authoritative", () => {
+    expect(macosNativeCandidatePaths(
+      { HOME: "/Users/me" },
+      "/Applications/OMP/omp\nrelative/omp\n/opt/homebrew/bin/omp\n",
+    )).toEqual([
+      "/opt/homebrew/bin/omp",
+      "/usr/local/bin/omp",
+      "/Users/me/.local/bin/omp",
+      "/Applications/OMP/omp",
+    ]);
+    expect(macosNativeCandidatePaths(
+      { HOME: "/Users/me", OMP_EXECUTABLE: "/private/tools/omp" },
+      "/Applications/OMP/omp",
+    )).toEqual(["/private/tools/omp"]);
+  });
+
+  it("discovers native macOS Default and named Profiles through the direct POSIX adapter", async () => {
+    mockedExecFile.mockImplementation(async (executable, args) => {
+      const command = String(executable);
+      const argv = args.map(String);
+      if (command === "/bin/sh" && argv.includes("omp-desktop-profiles")) {
+        return { stdout: "work\nbad/name\n", stderr: "" };
+      }
+      if (command !== "/private/tools/omp") throw new Error(`unexpected executable ${command}`);
+      const profile = argv[argv.indexOf("--profile") + 1];
+      const trailing = argv.slice(argv.indexOf("--profile") + 2).join("|");
+      const agentDir = profile === "default"
+        ? "/Users/me/.omp/agent"
+        : `/Users/me/.omp/profiles/${profile}/agent`;
+      if (trailing === "--version") return { stdout: "omp/17.2.12", stderr: "" };
+      if (trailing === "config|path") return { stdout: agentDir, stderr: "" };
+      if (trailing === "gc|--json|--wal") return { stdout: gcPlan(agentDir), stderr: "" };
+      throw new Error(`unexpected argv ${argv.join("|")}`);
+    });
+
+    const result = await detectMacosEnvironment({
+      HOME: "/Users/me",
+      OMP_EXECUTABLE: "/private/tools/omp",
+    });
+
+    expect(result).toMatchObject({ platform: "darwin", mode: "macos-native", diagnostics: [] });
+    expect(result.installations.map(installation => ({
+      kind: installation.kind,
+      label: installation.label,
+      profile: installation.profile,
+      agentDir: installation.agentDir,
+    }))).toEqual([
+      {
+        kind: "macos-native",
+        label: "macOS (native)",
+        profile: undefined,
+        agentDir: "/Users/me/.omp/agent",
+      },
+      {
+        kind: "macos-native",
+        label: "macOS (native) · Profile · work",
+        profile: "work",
+        agentDir: "/Users/me/.omp/profiles/work/agent",
+      },
+    ]);
+    expect(result.installations.every(installation => /^macos-native:[a-f0-9]{24}$/u.test(installation.id)))
+      .toBe(true);
+    expect(mockedExecFile).not.toHaveBeenCalledWith("/bin/zsh", expect.anything());
   });
 });

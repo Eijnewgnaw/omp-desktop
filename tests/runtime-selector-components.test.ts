@@ -108,7 +108,7 @@ function environment(
   mode: EnvironmentInfo["mode"] = "windows-dual",
 ): EnvironmentInfo {
   return {
-    platform: mode === "windows-dual" ? "win32" : "linux",
+    platform: mode === "windows-dual" ? "win32" : mode === "macos-native" ? "darwin" : "linux",
     mode,
     installations,
     diagnostics: [],
@@ -329,5 +329,55 @@ describe("layered runtime selectors", () => {
     expect(sidebarContainer.querySelector(".runtime-picker--readonly")?.textContent).toContain("WSL");
     expect(sidebarContainer.querySelector(".runtime-picker--readonly")?.textContent).toContain("Profile · lab");
     expect(screen.getByText("Saved research session").closest(".session-row")?.textContent).toContain("WSL");
+  });
+
+  it("presents native macOS Profiles under one macOS location without rewriting IDs", () => {
+    const macosInstallations: OmpInstallation[] = [
+      {
+        id: "macos:default-real-id",
+        kind: "macos-native",
+        label: "macOS (native)",
+        executablePath: "/opt/homebrew/bin/omp",
+        version: "17.2.15",
+        agentDir: "/Users/me/.omp/agent",
+      },
+      {
+        id: "macos:work-real-id",
+        kind: "macos-native",
+        label: "macOS (native) · Profile · work",
+        profile: "work",
+        executablePath: "/opt/homebrew/bin/omp",
+        version: "17.2.15",
+        agentDir: "/Users/me/.omp/profiles/work/agent",
+      },
+    ];
+    const { container } = render(createElement(SettingsDialog, settingsProps({
+      environment: environment(macosInstallations, "macos-native"),
+      settings: { selectedInstallationId: "macos:work-real-id", themeMode: "system" },
+    })));
+
+    const location = screen.getByRole("combobox", { name: "默认新会话运行位置" });
+    expect(within(location).getAllByRole("option").map(option => option.textContent)).toEqual(["macOS"]);
+    expect((location as HTMLSelectElement).value).toBe("macos-native");
+    expect(within(screen.getByRole("combobox", { name: "默认 OMP Profile" }))
+      .getAllByRole("option").map(option => option.textContent)).toEqual(["Default", "work"]);
+    expect(container.querySelector(".diagnostic-card")?.textContent).toContain("macOS");
+
+    cleanup();
+    const macosSession = savedSession({
+      installationId: "macos:work-real-id",
+      runtimeKind: "macos-native",
+      runtimeLabel: "macOS (native) · Profile · work",
+      profile: "work",
+      path: "/Users/me/.omp/profiles/work/sessions/session-1.jsonl",
+      cwd: "/Users/me/project",
+    });
+    const { container: sidebarContainer } = render(createElement(Sidebar, sidebarProps({
+      sessions: [macosSession],
+      installations: macosInstallations,
+      activeInstallationId: "macos:work-real-id",
+    })));
+    expect(sidebarContainer.querySelector(".runtime-picker--readonly")?.textContent).toContain("macOS");
+    expect(screen.getByText("Saved research session").closest(".session-row")?.textContent).toContain("macOS");
   });
 });

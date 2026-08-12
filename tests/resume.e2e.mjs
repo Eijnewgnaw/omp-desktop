@@ -74,6 +74,7 @@ const app = await electron.launch({
     ...process.env,
     HOME: fakeHomeDirectory,
     PATH: `${fakeBinDirectory}${path.delimiter}${process.env.PATH || ""}`,
+    OMP_EXECUTABLE: path.join(fakeBinDirectory, "omp"),
     WSL_DISTRO_NAME: "OMPDesktopE2E",
     ELECTRON_DISABLE_SANDBOX: "1",
     FAKE_OMP_AGENT_DIR: agentDirectory,
@@ -82,6 +83,7 @@ const app = await electron.launch({
     FAKE_OMP_CONTINUATION_DELAY_MS: "2000",
     FAKE_TERMINAL_LOG: terminalLogPath,
     TERMINAL: fakeTerminalPath,
+    OMP_DESKTOP_TERMINAL: fakeTerminalPath,
   },
   timeout: 30_000,
 });

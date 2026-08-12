@@ -183,7 +183,7 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
       });
-    } else if (this.#installation.kind === "linux-direct") {
+    } else if (this.#installation.kind === "linux-direct" || this.#installation.kind === "macos-native") {
       this.#process = spawn(executablePath, ompArgs, {
         cwd,
         env: { ...process.env, COLORTERM: "truecolor" },
@@ -308,7 +308,7 @@ export class OmpRpcClient extends EventEmitter<OmpRpcClientEvents> {
       return;
     }
 
-    if (this.#installation.kind === "linux-direct") {
+    if (this.#installation.kind === "linux-direct" || this.#installation.kind === "macos-native") {
       child.kill("SIGTERM");
       if (!(await this.#waitForExit(SIGNAL_STOP_TIMEOUT_MS))) {
         child.kill("SIGKILL");

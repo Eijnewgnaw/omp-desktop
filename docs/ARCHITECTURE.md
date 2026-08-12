@@ -5,9 +5,11 @@ OMP Desktop 是 OMP 的桌面宿主，不是新的 agent 运行时。
 ```mermaid
 flowchart LR
   UI["React desktop UI"] -->|"validated IPC"| Main["Electron main process"]
+  Main -->|"native NDJSON RPC"| Mac["macOS OMP"]
   Main -->|"native NDJSON RPC"| Native["Windows OMP"]
   Main -->|"wsl.exe + NDJSON RPC"| WSL["OMP in WSL"]
   Native --> Profiles["Default and named Profiles"]
+  Mac --> Profiles
   WSL --> Profiles
   Profiles --> Models["Models, tools, extensions and rules"]
   Main -->|"read-only prefix scan"| Sessions["OMP JSONL sessions"]
@@ -19,7 +21,7 @@ flowchart LR
 
 ## Process boundary
 
-在 Windows 发布版中，主进程同时探测 Windows 原生 OMP 与 WSL 发行版中的 `omp`，并枚举 Default 和命名 Profile。每个 Profile 都通过 OMP 自身解析其 agent 目录，并生成独立 installation ID。启动会话时通过独立参数执行 OMP，用户路径不会插入 shell 脚本文本。WSL supervisor 使用独立进程组并记录精确 PGID，便于 App 退出或切换会话时只清理对应的 OMP：
+在 macOS 上，主进程从 Finder 可用的常见 Homebrew 路径、`~/.local/bin` 和登录 shell 发现原生 `omp`；在 Windows 发布版中，同时探测 Windows 原生 OMP 与 WSL 发行版中的 `omp`。所有平台都会枚举 Default 和命名 Profile。每个 Profile 都通过 OMP 自身解析其 agent 目录，并生成独立 installation ID。启动会话时通过独立参数执行 OMP，用户路径不会插入 shell 脚本文本。WSL supervisor 使用独立进程组并记录精确 PGID，便于 App 退出或切换会话时只清理对应的 OMP：
 
 ```text
 wsl.exe -d <distro> --cd <cwd> --exec /bin/sh -c <fixed-supervisor> ... <omp> --profile <default|name> --mode rpc-ui --cwd <cwd> [--resume <session>]
@@ -52,7 +54,9 @@ Renderer 只维护一个会话目标：未启动的新会话，或已保存的 O
 
 ## Runtime backends
 
-v0.1.0 使用两个彼此隔离的运行 adapter：Windows adapter 直接调用 `omp.exe` 并使用 Win32 路径，WSL adapter 通过指定发行版调用 POSIX 路径。每个 Default/命名 Profile 在 adapter 内仍是独立 installation，分别隔离 agent 目录、会话索引、主题、元数据、最近工作区和终端交接。保存的会话不会跨 adapter 或 Profile 隐式迁移。
+macOS adapter 直接调用原生 `omp` 并使用 POSIX 路径；Windows adapter 直接调用 `omp.exe` 并使用 Win32 路径；WSL adapter 通过指定发行版调用 POSIX 路径。每个 Default/命名 Profile 在 adapter 内仍是独立 installation，分别隔离 agent 目录、会话索引、主题、元数据、最近工作区和终端交接。保存的会话不会跨 adapter 或 Profile 隐式迁移。
+
+macOS Terminal 交接使用固定 AppleScript。工作区、可执行文件与 OMP 参数作为独立 argv 传入，并在脚本中逐项 shell quoting；应用不会把用户路径插值进 AppleScript 源码。
 
 ## Theme model
 

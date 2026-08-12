@@ -88,6 +88,39 @@ function dialogProps(patch: Partial<Parameters<typeof NewSessionDialog>[0]> = {}
 afterEach(cleanup);
 
 describe("NewSessionDialog", () => {
+  it("shows native macOS and keeps its Profiles inside that location", () => {
+    const macosInstallations: OmpInstallation[] = [
+      {
+        id: "macos:default",
+        kind: "macos-native",
+        label: "macOS (native)",
+        executablePath: "/opt/homebrew/bin/omp",
+        version: "17.2.15",
+        agentDir: "/Users/me/.omp/agent",
+      },
+      {
+        id: "macos:work",
+        kind: "macos-native",
+        label: "macOS (native) · Profile · work",
+        profile: "work",
+        executablePath: "/opt/homebrew/bin/omp",
+        version: "17.2.15",
+        agentDir: "/Users/me/.omp/profiles/work/agent",
+      },
+    ];
+    render(createElement(NewSessionDialog, dialogProps({
+      installations: macosInstallations,
+      selectedInstallationId: "macos:work",
+    })));
+
+    const backendGroup = screen.getByRole("radiogroup", { name: "运行位置" });
+    expect(within(backendGroup).getAllByRole("radio")).toHaveLength(1);
+    expect(within(backendGroup).getByRole("radio", { name: /^macOS/u }).getAttribute("aria-checked"))
+      .toBe("true");
+    expect(within(screen.getByRole("combobox", { name: "OMP Profile" }))
+      .getAllByRole("option").map(option => option.textContent)).toEqual(["Default", "work"]);
+  });
+
   it("shows only Windows and WSL as top-level locations and filters Profiles by the selected backend", () => {
     const props = dialogProps();
     const { rerender } = render(createElement(NewSessionDialog, props));

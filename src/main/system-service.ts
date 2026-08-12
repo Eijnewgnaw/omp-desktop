@@ -29,6 +29,9 @@ export async function chooseWorkspace(installation: OmpInstallation): Promise<st
     if (installation.kind === "wsl") {
       return `\\\\wsl.localhost\\${assertDistro(installation.distro ?? "")}\\home`;
     }
+    if (installation.kind === "macos-native") {
+      return process.env.HOME ?? path.posix.dirname(installation.agentDir);
+    }
     return process.cwd();
   })();
   const result = await dialog.showOpenDialog({
@@ -53,6 +56,21 @@ type SpawnTerminal = (command: string, args: readonly string[], options: SpawnOp
 
 const TERMINAL_STARTUP_WINDOW_MS = 250;
 
+export const MACOS_TERMINAL_SCRIPT = `
+on run argv
+  set workingDirectory to item 1 of argv
+  set executablePath to item 2 of argv
+  set commandText to "cd " & quoted form of workingDirectory & " && exec " & quoted form of executablePath
+  repeat with argumentValue in items 3 thru -1 of argv
+    set commandText to commandText & " " & quoted form of (contents of argumentValue)
+  end repeat
+  tell application "Terminal"
+    activate
+    do script commandText
+  end tell
+end run
+`;
+
 // Windows Terminal treats semicolons inside the child command line as action
 // separators. Prefix literal semicolons so paths stay in the single new-tab
 // command that we construct.
@@ -64,7 +82,9 @@ export function buildOmpTerminalLaunch(
   installation: OmpInstallation,
   input: HandoffSessionInput,
   platform: NodeJS.Platform = process.platform,
-  terminal = process.env.TERMINAL || "x-terminal-emulator",
+  terminal = platform === "darwin"
+    ? process.env.OMP_DESKTOP_TERMINAL
+    : process.env.TERMINAL || "x-terminal-emulator",
 ): TerminalLaunch {
   const cwd = assertLogicalPath(installation, input.path, "workspace path");
   const ompPath = assertLogicalPath(installation, installation.executablePath, "OMP executable");
@@ -104,8 +124,35 @@ export function buildOmpTerminalLaunch(
     };
   }
 
+  if (installation.kind === "macos-native") {
+    if (platform !== "darwin") throw new Error("Native macOS OMP requires macOS Terminal");
+    if (terminal) {
+      return {
+        command: terminal,
+        args: ["-e", ompPath, ...ompArgs.slice(1)],
+        options: {
+          cwd: path.posix.normalize(cwd),
+          detached: true,
+          stdio: "ignore",
+        },
+        displayName: "test terminal",
+      };
+    }
+    return {
+      command: "/usr/bin/osascript",
+      // The AppleScript is constant. Paths and OMP arguments remain separate
+      // argv values and are shell-quoted by AppleScript before Terminal sees them.
+      args: ["-e", MACOS_TERMINAL_SCRIPT, "--", cwd, ompPath, ...ompArgs.slice(1)],
+      options: {
+        detached: true,
+        stdio: "ignore",
+      },
+      displayName: "macOS Terminal",
+    };
+  }
+
   return {
-    command: terminal,
+    command: terminal ?? "x-terminal-emulator",
     args: ["-e", ompPath, ...ompArgs.slice(1)],
     options: {
       cwd: path.posix.normalize(cwd),

@@ -9,7 +9,12 @@ const packagedExecutable = process.env.OMP_DESKTOP_EXECUTABLE;
 const electronPath = packagedExecutable || (await import("electron")).default;
 const userDataDirectory = path.join(outputDirectory, "user-data");
 const fakeHomeDirectory = path.join(outputDirectory, "fake-home");
-await fs.mkdir(fakeHomeDirectory, { recursive: true });
+const fakeAgentDirectory = path.join(outputDirectory, "fake-agent");
+const fakeBinDirectory = path.resolve("tests", "fixtures", "fake-bin");
+await Promise.all([
+  fs.mkdir(fakeHomeDirectory, { recursive: true }),
+  fs.mkdir(fakeAgentDirectory, { recursive: true }),
+]);
 
 const app = await electron.launch({
   executablePath: packagedExecutable || electronPath,
@@ -20,6 +25,9 @@ const app = await electron.launch({
   env: {
     ...process.env,
     HOME: fakeHomeDirectory,
+    PATH: `${fakeBinDirectory}${path.delimiter}${process.env.PATH || ""}`,
+    OMP_EXECUTABLE: path.join(fakeBinDirectory, "omp"),
+    FAKE_OMP_AGENT_DIR: fakeAgentDirectory,
     ELECTRON_DISABLE_SANDBOX: "1",
     OMP_DESKTOP_E2E: "1",
   },

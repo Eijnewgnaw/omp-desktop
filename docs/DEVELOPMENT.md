@@ -6,10 +6,10 @@ This document covers source setup, validation, packaging, and release convention
 
 - Node.js 22.20 or newer
 - npm
-- Windows 11, with native Windows OMP and WSL2 OMP for complete packaged-app testing
+- macOS for native OMP and DMG/ZIP validation, or Windows 11 with native Windows OMP and WSL2 OMP
 - A working OMP installation for the opt-in real RPC integration test
 
-WSLg can run the Linux development shell. The released desktop target is one Windows x64 package with isolated native Windows and WSL2 OMP adapters.
+WSLg can run the Linux development shell. Release targets are Apple Silicon and Intel macOS packages plus one Windows x64 package; each runtime adapter and Profile remains isolated.
 
 ## Setup
 
@@ -41,7 +41,17 @@ npm run test:e2e:profile
 | `npm run test:e2e:resume` | Exercise resume/send, model switching, continuation frames, error recovery, reconnects, session controls, workspace ownership, and terminal handoff with a fake OMP runtime. |
 | `npm run test:e2e:profile` | Exercise Default/named Profile discovery, selectors, saved-session routing, theme isolation, and new-session agent-directory isolation. |
 
-The real OMP integration test is opt-in and intentionally does not call a model. Packaged Windows changes should also be verified against an installed build and the real Windows Terminal handoff path.
+The real OMP integration test is opt-in and intentionally does not call a model. Packaged changes should also be verified against an installed build and the real macOS Terminal or Windows Terminal handoff path.
+
+## Build macOS packages
+
+On Apple Silicon:
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist -- --mac --arm64 --publish never
+```
+
+On Intel macOS, replace `--arm64` with `--x64`. DMG and ZIP artifacts are written to `release/`. Current macOS packages are unsigned and not notarized; do not describe them as signed or notarized.
 
 ## Build a Windows installer
 
@@ -81,10 +91,10 @@ build/        Application icons
 
 1. Update `package.json`, `package-lock.json`, and `CHANGELOG.md`.
 2. Run type-checking, unit tests, production build, real OMP handshake, and Electron E2E.
-3. Build and install the Windows artifact, then test Default and named Profiles on native Windows and WSL plus both visible terminal-handoff paths.
+3. Build and install the platform artifacts, then test Default and named Profiles on native macOS, native Windows and WSL, including each visible terminal-handoff path.
 4. Open a pull request and wait for CI.
 5. Merge before creating the release tag.
-6. Wait for the Windows Release workflow and verify the public assets and checksums.
+6. Wait for the macOS and Windows Release jobs and verify every public asset.
 7. Treat release or tag deletion as destructive and perform it only after the replacement release is healthy.
 
 See [Architecture](ARCHITECTURE.md), [Security](../SECURITY.md), and [Contributing](../CONTRIBUTING.md) for the remaining project policies.

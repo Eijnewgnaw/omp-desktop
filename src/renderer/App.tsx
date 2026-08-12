@@ -674,7 +674,7 @@ export default function App(): React.JSX.Element {
     const draft = newSessionDraft;
     if (selectingNewSessionWorkspaceRef.current || creatingNewSessionRef.current) return;
     if (!draft?.installationId) {
-      setNewSessionError("请先选择 Windows 或 WSL，以及对应的 OMP Profile");
+      setNewSessionError("请先选择 OMP 运行环境及对应的 Profile");
       return;
     }
     const requestGeneration = newSessionRequestGenerationRef.current + 1;
