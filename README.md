@@ -19,7 +19,8 @@
   <a href="https://github.com/Eijnewgnaw/omp-desktop/releases"><img src="https://img.shields.io/github/v/release/Eijnewgnaw/omp-desktop?include_prereleases&label=release" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-658f90" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%2B%20WSL2-4b8bbe" alt="Windows and WSL2" />
-  <img src="https://img.shields.io/badge/status-alpha-d6a84b" alt="Alpha status" />
+  <img src="https://img.shields.io/badge/status-experimental%20alpha-d65f4b" alt="Experimental Alpha status" />
+  <img src="https://img.shields.io/badge/debugging-active-d6a84b" alt="Active debugging" />
 </p>
 
 <p align="center">
@@ -28,8 +29,8 @@
 
 ![OMP Desktop main window](docs/images/omp-desktop-home.png)
 
-> [!IMPORTANT]
-> OMP Desktop is an early Alpha. It has been integration-tested with OMP `17.2.12`; compatibility with other versions is best-effort while OMP's RPC and session formats continue to evolve.
+> [!CAUTION]
+> **OMP Desktop is an experimental Alpha under active development and debugging.** The current release targets OMP running inside WSL2 only. Back up your OMP agent directory before testing session resume, terminal handoff, Trash, or permanent deletion. It has been integration-tested with OMP `17.2.12`; compatibility with other versions is best-effort.
 
 ## Why OMP Desktop?
 
@@ -38,13 +39,13 @@ OMP is a powerful terminal-first agent. OMP Desktop adds a focused graphical wor
 - Discover OMP installations across local WSL distributions.
 - Start a task after choosing a WSL workspace.
 - Find, open, and continue existing OMP JSONL sessions.
-- Search, pin, archive, restore, or move sessions to a recoverable app trash.
+- Search, pin, archive, restore, move sessions to a recoverable app trash, or permanently delete them with a separate typed confirmation.
 - Read paginated history and continue the same session through OMP RPC.
 - Select from the models reported by OMP and switch with OMP's native `set_model` RPC command.
 - Display streaming replies, reasoning, Markdown, code, and tool execution.
 - Handle OMP extension requests such as confirmation, selection, text input, and editor input.
 - Follow OMP's light, dark, custom, symbol, and color-blind theme settings.
-- Reopen any workspace or session in Windows Terminal.
+- Hand a session to a new, visible Windows Terminal window and require an explicit reclaim before the desktop can resume it again.
 
 OMP remains the only agent runtime and source of truth. The desktop app does not implement a second agent or copy OMP's decision logic.
 
@@ -53,7 +54,8 @@ OMP remains the only agent runtime and source of truth. The desktop app does not
 | Component | Status |
 | --- | --- |
 | Windows 11 x64 | Primary release target |
-| WSL2 | Required by the packaged Windows app |
+| Windows desktop + OMP in WSL2 | Current experimental target; actively debugging |
+| Windows desktop + native Windows OMP | Planned; **not supported by the current Alpha** |
 | OMP `17.2.12` | Tested |
 | Other OMP versions | Best-effort Alpha compatibility |
 | Linux under WSLg | Development compatibility mode |
@@ -87,15 +89,17 @@ OMP Desktop does not install or configure OMP for you.
 2. Download the newest `OMP-Desktop-*.exe` installer.
 3. Run the installer.
 4. Launch OMP Desktop and select the detected WSL installation.
-5. Choose a workspace, start a new task, or select an existing session in the sidebar.
+5. Click **New session**, choose that new session's WSL workspace, then send the first message. Existing sessions always reopen with the workspace stored in their own OMP JSONL.
 
-The session menu provides **Continue**, **Open in original terminal**, **Pin**, **Archive/Restore**, and **Move to Trash**. Before handing an owned session to Windows Terminal or moving it to Trash, the app verifies that its desktop RPC runtime has stopped. A successful terminal handoff returns the desktop composer to a fresh session so it cannot accidentally resume the same JSONL in parallel. Move to Trash is confirmed first and relocates the JSONL session plus its adjacent artifact directory under:
+The session menu provides **Continue**, **Open in original terminal**, **Pin**, **Archive/Restore**, **Move to Trash**, and **Delete permanently**. Before handing an owned session to Windows Terminal, moving it, or deleting it, the app verifies that its desktop RPC runtime has stopped. A successful terminal handoff returns the composer to a blank new session and records a handoff lock. To resume that JSONL in the desktop again, first close OMP in the terminal and explicitly confirm **Reclaim session**.
+
+**Move to Trash** is recoverable. It relocates the JSONL session plus its adjacent artifact directory under:
 
 ```text
 <OMP agent directory>/trash/omp-desktop/
 ```
 
-It does not permanently delete the files.
+**Delete permanently** is a different action. It requires typing `永久删除` and then removes that exact indexed JSONL and its adjacent artifact directory. It cannot be undone.
 
 ## How it works
 
@@ -131,7 +135,7 @@ OMP Desktop is local-first:
 - The app reads only the beginning of each OMP JSONL file to build its session index.
 - It does not rewrite session content. OMP itself persists resumed conversations.
 - Pin, archive state, and app preferences live in a separate local SQLite database.
-- A session is moved only after you explicitly confirm **Move to Trash**.
+- Moving to Trash and permanent deletion are separate, explicitly confirmed actions. Permanent deletion never uses the recoverable app trash.
 - The app collects no telemetry, uploads no conversations, and stores no model-provider API keys.
 
 The renderer uses context isolation, Electron sandboxing, web security, and no Node.js integration. File, process, and WSL operations are exposed through a small typed preload API with input and path validation. External navigation is denied by default; HTTP(S) links are handed to the system browser.
@@ -204,6 +208,7 @@ build/        Application icons
 
 - Publish an OMP version compatibility matrix.
 - Improve extension widget and status rendering.
+- Add a Windows-native OMP backend. It will call Windows `omp.exe` directly, while the WSL backend will continue to call the selected distribution's `omp`; saved sessions will stay bound to their original backend and workspace.
 - Add editable session labels, tags, and an in-app trash browser.
 - Add batch session operations and cross-project filtering.
 - Add full English UI localization.

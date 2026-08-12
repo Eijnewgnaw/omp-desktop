@@ -40,6 +40,13 @@ const settingsPatchSchema = z
     lastWorkspace: pathSchema.optional(),
     themeMode: z.enum(["system", "dark", "light"]).optional(),
     profile: z.string().max(128).optional(),
+    handedOffSessions: z.array(z.object({
+      distro: distroSchema,
+      installationPath: pathSchema,
+      sessionPath: pathSchema,
+      cwd: pathSchema,
+      handedOffAt: z.string().datetime(),
+    })).max(256).optional(),
   })
   .strict();
 
@@ -77,13 +84,20 @@ export function registerIpc(window: BrowserWindow, services: IpcServices): () =>
     const installation = await installationFor(input.distro, input.installationPath);
     return services.sessions.list(installation, input.includeArchived);
   });
-  ipcMain.handle("sessions:update", (_event, sessionPath: unknown, rawPatch: unknown) =>
-    services.sessions.update(pathSchema.parse(sessionPath), metadataPatchSchema.parse(rawPatch)),
-  );
+  ipcMain.handle("sessions:update", async (_event, raw: unknown, rawPatch: unknown) => {
+    const input = installationInputSchema.extend({ path: pathSchema }).parse(raw);
+    const installation = await installationFor(input.distro, input.installationPath);
+    return services.sessions.update(installation, input.path, metadataPatchSchema.parse(rawPatch));
+  });
   ipcMain.handle("sessions:trash", async (_event, raw: unknown) => {
     const input = installationInputSchema.extend({ path: pathSchema }).parse(raw);
     const installation = await installationFor(input.distro, input.installationPath);
     return services.sessions.trash(installation, input.path);
+  });
+  ipcMain.handle("sessions:delete", async (_event, raw: unknown) => {
+    const input = installationInputSchema.extend({ path: pathSchema }).parse(raw);
+    const installation = await installationFor(input.distro, input.installationPath);
+    return services.sessions.deletePermanently(installation, input.path);
   });
 
   ipcMain.handle("theme:get", async (_event, raw: unknown) => {
@@ -132,6 +146,7 @@ export function registerIpc(window: BrowserWindow, services: IpcServices): () =>
       "sessions:list",
       "sessions:update",
       "sessions:trash",
+      "sessions:delete",
       "theme:get",
       "runtime:start",
       "runtime:send",

@@ -19,12 +19,18 @@ import { BrandMark } from "./BrandMark";
 import { ToolCard } from "./ToolCard";
 
 interface ConversationPaneProps {
+  targetKey: string;
   session?: SessionSummary;
   workspace?: string;
+  workspaceSelectable: boolean;
+  terminalAvailable: boolean;
   runtime?: RuntimeDescriptor;
   conversation: ConversationState;
   editorUpdate?: { key: string; messages: string[]; force?: boolean };
   sending: boolean;
+  refreshing: boolean;
+  terminalBusy: boolean;
+  transitioning: boolean;
   availableModels: OmpModelInfo[];
   onSubmit(message: string): Promise<void>;
   onStop(): void;
@@ -103,6 +109,7 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
   const { draft, retryDrafts } = editor;
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const followOutputRef = useRef(true);
   const running = ["starting", "running", "aborting"].includes(props.runtime?.state ?? "");
   const currentModel = typeof props.conversation.model?.provider === "string" && typeof props.conversation.model.id === "string"
     ? props.conversation.model as OmpModelInfo
@@ -113,8 +120,14 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
     : props.availableModels;
 
   useEffect(() => {
+    if (!followOutputRef.current) return;
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [props.conversation.messages, props.conversation.tools]);
+
+  useEffect(() => {
+    followOutputRef.current = true;
+    setEditor({ draft: "", retryDrafts: [] });
+  }, [props.targetKey]);
 
   useEffect(() => {
     if (!props.editorUpdate) return;
@@ -191,19 +204,37 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
             <span className="header-chip"><Gauge size={14} />{props.conversation.model.name || props.conversation.model.id}</span>
           ) : null}
           {props.conversation.thinkingLevel && <span className="header-chip">{props.conversation.thinkingLevel}</span>}
-          <button className="icon-button" onClick={props.onRefresh} title="刷新会话"><RefreshCw size={16} /></button>
           <button
             className="icon-button"
-            disabled={props.sending || running}
-            onClick={props.onOpenTerminal}
-            title="在原始 OMP 终端中打开"
+            disabled={props.refreshing || props.transitioning}
+            onClick={props.onRefresh}
+            title={props.refreshing ? "正在重新载入当前会话" : "重新载入当前会话"}
           >
-            <TerminalSquare size={17} />
+            <RefreshCw className={props.refreshing ? "spin" : undefined} size={16} />
+          </button>
+          <button
+            className="icon-button"
+            disabled={!props.terminalAvailable || props.terminalBusy || props.transitioning}
+            onClick={props.onOpenTerminal}
+            title={!props.terminalAvailable
+              ? "先在桌面端发送消息并创建会话，再交给原始终端"
+              : props.terminalBusy
+                ? "正在打开原始 OMP 终端"
+                : "在原始 OMP 终端中打开"}
+          >
+            {props.terminalBusy ? <RefreshCw className="spin" size={16} /> : <TerminalSquare size={17} />}
           </button>
         </div>
       </header>
 
-      <div className="conversation-scroll" ref={scrollRef}>
+      <div
+        className="conversation-scroll"
+        ref={scrollRef}
+        onScroll={event => {
+          const element = event.currentTarget;
+          followOutputRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+        }}
+      >
         {props.conversation.messages.length === 0 && props.conversation.tools.length === 0 ? (
           <section className="welcome-panel">
             <div className="welcome-mark"><BrandMark /></div>
@@ -212,9 +243,9 @@ export function ConversationPane(props: ConversationPaneProps): React.JSX.Elemen
             <p>
               {props.workspace
                 ? `当前工作区是 ${props.workspace}。发送消息后，任务仍由你现有的 OMP 完整执行。`
-                : "先选择 WSL 项目目录，然后从这里启动或恢复 OMP 会话。"}
+                : "先为这个新会话选择 WSL 项目目录，然后再启动 OMP。"}
             </p>
-            {!props.workspace && (
+            {!props.workspace && props.workspaceSelectable && (
               <button className="primary-button welcome-action" onClick={props.onChooseWorkspace}>
                 <FolderOpen size={16} />选择工作区
               </button>

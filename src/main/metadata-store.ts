@@ -9,6 +9,8 @@ interface SessionMetadataRow {
   tags_json: string;
 }
 
+const legacyInstallationKey = "__omp_desktop_legacy_unscoped__";
+
 const defaultSettings: AppSettings = {
   themeMode: "system",
 };
@@ -25,15 +27,54 @@ export class MetadataStore {
         key TEXT PRIMARY KEY,
         value_json TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS session_metadata (
-        session_path TEXT PRIMARY KEY,
+    `);
+    this.#ensureSessionMetadataSchema();
+  }
+
+  #createSessionMetadataTable(): void {
+    this.#db.exec(`
+      CREATE TABLE session_metadata (
+        installation_key TEXT NOT NULL,
+        session_path TEXT NOT NULL,
         display_title TEXT,
         pinned INTEGER NOT NULL DEFAULT 0,
         archived INTEGER NOT NULL DEFAULT 0,
         tags_json TEXT NOT NULL DEFAULT '[]',
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (installation_key, session_path)
       );
     `);
+  }
+
+  #ensureSessionMetadataSchema(): void {
+    const table = this.#db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_metadata'")
+      .get();
+    if (!table) {
+      this.#createSessionMetadataTable();
+      return;
+    }
+
+    const columns = this.#db.pragma("table_info(session_metadata)") as Array<{ name: string }>;
+    if (columns.some(column => column.name === "installation_key")) return;
+
+    // V1 metadata cannot identify its originating installation. Preserve each row
+    // under a legacy key; the first installation that sees that exact path claims
+    // it atomically, so existing aliases/pins survive without leaking thereafter.
+    const migrate = this.#db.transaction(() => {
+      this.#db.exec("ALTER TABLE session_metadata RENAME TO session_metadata_v1");
+      this.#createSessionMetadataTable();
+      this.#db
+        .prepare(`
+          INSERT INTO session_metadata
+            (installation_key, session_path, display_title, pinned, archived, tags_json, updated_at)
+          SELECT ?, session_path, display_title, pinned, archived, tags_json, updated_at
+          FROM session_metadata_v1
+        `)
+        .run(legacyInstallationKey);
+      this.#db.exec("DROP TABLE session_metadata_v1");
+    });
+    migrate();
   }
 
   getSettings(): AppSettings {
@@ -67,14 +108,33 @@ export class MetadataStore {
     return this.getSettings();
   }
 
-  getSessionMetadata(paths: string[]): Map<string, SessionMetadataRow> {
+  getSessionMetadata(installationKey: string, paths: string[]): Map<string, SessionMetadataRow> {
     const result = new Map<string, SessionMetadataRow>();
     if (paths.length === 0) return result;
-    const query = this.#db.prepare("SELECT * FROM session_metadata WHERE session_path = ?");
-    for (const sessionPath of paths) {
-      const row = query.get(sessionPath) as SessionMetadataRow | undefined;
-      if (row) result.set(sessionPath, row);
-    }
+    const query = this.#db.prepare(`
+      SELECT session_path, display_title, pinned, archived, tags_json
+      FROM session_metadata
+      WHERE installation_key = ? AND session_path = ?
+    `);
+    const claimLegacy = this.#db.prepare(`
+      UPDATE session_metadata
+      SET installation_key = ?
+      WHERE installation_key = ? AND session_path = ?
+    `);
+    const read = this.#db.transaction(() => {
+      for (const sessionPath of paths) {
+        let row = query.get(installationKey, sessionPath) as SessionMetadataRow | undefined;
+        if (!row) {
+          const legacy = query.get(legacyInstallationKey, sessionPath) as SessionMetadataRow | undefined;
+          if (legacy) {
+            claimLegacy.run(installationKey, legacyInstallationKey, sessionPath);
+            row = legacy;
+          }
+        }
+        if (row) result.set(sessionPath, row);
+      }
+    });
+    read();
     return result;
   }
 
@@ -96,8 +156,12 @@ export class MetadataStore {
     };
   }
 
-  updateSession(summary: SessionSummary, patch: SessionMetadataPatch): SessionSummary {
-    const current = this.getSessionMetadata([summary.path]).get(summary.path);
+  updateSession(
+    installationKey: string,
+    summary: SessionSummary,
+    patch: SessionMetadataPatch,
+  ): SessionSummary {
+    const current = this.getSessionMetadata(installationKey, [summary.path]).get(summary.path);
     const displayTitle = patch.displayTitle === undefined ? current?.display_title ?? null : patch.displayTitle;
     const pinned = patch.pinned === undefined ? current?.pinned ?? 0 : Number(patch.pinned);
     const archived = patch.archived === undefined ? current?.archived ?? 0 : Number(patch.archived);
@@ -111,18 +175,24 @@ export class MetadataStore {
     this.#db
       .prepare(`
         INSERT INTO session_metadata
-          (session_path, display_title, pinned, archived, tags_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(session_path) DO UPDATE SET
+          (installation_key, session_path, display_title, pinned, archived, tags_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(installation_key, session_path) DO UPDATE SET
           display_title = excluded.display_title,
           pinned = excluded.pinned,
           archived = excluded.archived,
           tags_json = excluded.tags_json,
           updated_at = excluded.updated_at
       `)
-      .run(summary.path, displayTitle, pinned, archived, JSON.stringify(tags), new Date().toISOString());
-    const row = this.getSessionMetadata([summary.path]).get(summary.path);
+      .run(installationKey, summary.path, displayTitle, pinned, archived, JSON.stringify(tags), new Date().toISOString());
+    const row = this.getSessionMetadata(installationKey, [summary.path]).get(summary.path);
     return this.applyMetadata(summary, row);
+  }
+
+  deleteSession(installationKey: string, sessionPath: string): void {
+    this.#db
+      .prepare("DELETE FROM session_metadata WHERE installation_key = ? AND session_path = ?")
+      .run(installationKey, sessionPath);
   }
 
   close(): void {
